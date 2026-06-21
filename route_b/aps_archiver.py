@@ -314,9 +314,12 @@ def download_formats(token, project_id, version_id):
     path = '/data/v1/projects/{}/versions/{}/downloadFormats'.format(project_id, quote(version_id, safe=''))
     data = api_get(path, token, accept_jsonapi=True)
     fmts = set()
-    attrs = data.get('data', {}).get('attributes', {})
-    for f in attrs.get('formats', []):
-        if f.get('fileType'):
+    attrs = _as_obj(_as_obj(data.get('data')).get('attributes'))
+    formats = attrs.get('formats', [])
+    if isinstance(formats, dict):
+        formats = [dict(v, fileType=k) for k, v in formats.items()]
+    for f in formats:
+        if isinstance(f, dict) and f.get('fileType'):
             fmts.add(f['fileType'])
     return fmts
 
@@ -336,29 +339,45 @@ def create_download(token, project_id, version_id, file_type):
     return api_post('/data/v1/projects/{}/downloads'.format(project_id), token, body)
 
 
+def _as_obj(x):
+    """Coerce a JSON:API node to a dict. Unwraps single-element lists; None/other -> {}.
+    The downloads API sometimes returns `data` (and nested nodes) as arrays."""
+    if isinstance(x, list):
+        return _as_obj(x[0]) if x else {}
+    return x if isinstance(x, dict) else {}
+
+
+def _storage_from_download(dl):
+    """Extract (object_id, direct_link) from a 'downloads' resource. Tolerant of lists."""
+    dl = _as_obj(dl)
+    storage = _as_obj(_as_obj(dl.get('relationships')).get('storage'))
+    link = _as_obj(_as_obj(storage.get('meta')).get('link')).get('href')
+    oid = _as_obj(storage.get('data')).get('id')
+    return oid, link
+
+
 def resolve_download_storage(token, project_id, post_resp):
     """
     From the create_download response, get the final storage object id
-    (urn:adsk.objects:os.object:...). The response may be:
+    (urn:adsk.objects:os.object:...) or a direct download link. The response may be:
       - directly type=downloads (already finished)
-      - type=jobs (needs polling)
+      - type=jobs / type=downloads with status (needs polling)
+    On an unexpected shape, raises with the raw JSON so it can be diagnosed.
     """
-    data = post_resp.get('data', {})
+    raw = json.dumps(post_resp)[:1200]
+    data = _as_obj(post_resp.get('data'))
     dtype = data.get('type')
 
-    def storage_from_download(dl):
-        rel = dl.get('relationships', {}).get('storage', {})
-        # prefer the direct download link
-        link = rel.get('meta', {}).get('link', {}).get('href')
-        oid = rel.get('data', {}).get('id')
-        return oid, link
-
     if dtype == 'downloads':
-        return storage_from_download(data)
+        oid, link = _storage_from_download(data)
+        if oid or link:
+            return oid, link
 
-    # Poll the job: use the self link from the response, else build /downloads/{id}
     job_id = data.get('id')
-    self_link = post_resp.get('links', {}).get('self', {}).get('href')
+    self_link = _as_obj(_as_obj(_as_obj(post_resp.get('links')).get('self'))).get('href')
+    if not job_id and not self_link:
+        raise RuntimeError('unexpected downloads response (no job id / storage): ' + raw)
+
     deadline = time.time() + JOB_POLL_TIMEOUT
     while time.time() < deadline:
         time.sleep(JOB_POLL_INTERVAL)
@@ -367,18 +386,22 @@ def resolve_download_storage(token, project_id, post_resp):
         else:
             poll = api_get('/data/v1/projects/{}/downloads/{}'.format(project_id, job_id),
                            token, accept_jsonapi=True)
-        pdata = poll.get('data', {})
-        status = pdata.get('attributes', {}).get('status')
-        if pdata.get('type') == 'downloads' and pdata.get('relationships', {}).get('storage'):
-            return storage_from_download(pdata)
+        pdata = _as_obj(poll.get('data'))
+        status = _as_obj(pdata.get('attributes')).get('status')
+        if pdata.get('type') == 'downloads':
+            oid, link = _storage_from_download(pdata)
+            if oid or link:
+                return oid, link
         if status in ('failed', 'cancelled'):
-            raise RuntimeError('Downloads job failed: {}'.format(json.dumps(pdata)))
+            raise RuntimeError('Downloads job failed: ' + json.dumps(poll)[:1200])
         # status == 'processing' / 'inprogress' -> keep waiting
     raise RuntimeError('Downloads job timed out ({}s)'.format(JOB_POLL_TIMEOUT))
 
 
 def signed_s3_download_url(token, object_id):
     """object_id looks like urn:adsk.objects:os.object:{bucket}/{object}."""
+    if not object_id or 'os.object:' not in object_id:
+        raise RuntimeError('unexpected storage object id: {!r}'.format(object_id))
     tail = object_id.split('os.object:', 1)[1]
     bucket, obj = tail.split('/', 1)
     from urllib.parse import quote
