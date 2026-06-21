@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-路線 B 的本機 Web UI 後端（Flask）。
+Local Web UI backend (Flask) for Route B.
 
-它把 aps_archiver.py 的下載邏輯包成 HTTP API，前端（static/index.html）提供：
-  - 一鍵瀏覽器登入（OAuth callback 直接由本服務的 /api/auth/callback 接）
-  - 樹狀瀏覽 hub / project / folder，勾選要下載的項目
-  - 自訂下載路徑、執行、即時進度
-  - 結果分析（成功 / 無原生格式 / 失敗）
-  - 一鍵重抓失敗的漏檔
+It wraps the download logic of aps_archiver.py as an HTTP API; the frontend
+(static/index.html) provides:
+  - one-click browser login (the OAuth callback is handled by this service's
+    /api/auth/callback)
+  - a tree to browse hub / project / folder and check the items to download
+  - a custom download path, run button, live progress
+  - results analysis (exported / no native format / failed)
+  - one-click retry of failed/missing files
 
-安全：沿用 aps_archiver 的 `data:read account:read` 唯讀權限，只下載、不刪改雲端或本機檔。
+Safety: it inherits aps_archiver's read-only `data:read account:read` scope --
+download only, never deletes or modifies any cloud or local file.
 
-啟動：
+Start:
     cd route_b
     pip install -r requirements.txt
     python app.py
-    # 然後瀏覽器開 http://localhost:8080
+    # then open http://localhost:8080 in a browser
 """
 
 import json
@@ -36,7 +39,7 @@ PORT = int(os.environ.get('APS_UI_PORT', '8080'))
 
 app = Flask(__name__, static_folder=os.path.join(HERE, 'static'), static_url_path='/static')
 
-# ============================ 設定檔 ============================
+# ============================ Config file ============================
 
 def load_config():
     cfg = {
@@ -63,7 +66,7 @@ CONFIG = load_config()
 
 
 def _apply_config_to_aps():
-    # 讓 aps_archiver 用 UI 設定的金鑰（refresh token 需要 client id/secret）
+    # Make aps_archiver use the UI-configured keys (refresh token needs client id/secret).
     aps.CLIENT_ID = CONFIG['client_id']
     aps.CLIENT_SECRET = CONFIG['client_secret']
     aps.CALLBACK_URL = 'http://localhost:{}/api/auth/callback'.format(PORT)
@@ -72,10 +75,11 @@ def _apply_config_to_aps():
 _apply_config_to_aps()
 
 
-# ============================ OAuth（Web 版） ============================
+# ============================ OAuth (web version) ============================
 
 def web_token():
-    """只刷新、不開瀏覽器。無有效 token 時丟 RuntimeError，讓前端導去登入。"""
+    """Refresh only, never open a browser. Raises RuntimeError when there is no valid
+    token so the frontend can route to login."""
     tok = aps._load_cached_token()
     if aps._token_valid(tok):
         return tok['access_token']
@@ -85,7 +89,7 @@ def web_token():
     raise RuntimeError('NOT_AUTHENTICATED')
 
 
-# API 呼叫遇 401 時也走這個（不會誤開瀏覽器 / 撞 Flask 連接埠）
+# API calls also use this on a 401 (won't accidentally open a browser / collide with the Flask port)
 aps.set_token_provider(web_token)
 
 
@@ -97,7 +101,7 @@ def is_authenticated():
         return False
 
 
-# ============================ 進度狀態 ============================
+# ============================ Progress state ============================
 
 LOCK = threading.Lock()
 PROGRESS = {
@@ -120,10 +124,10 @@ def _reset_progress(output_root):
         })
 
 
-# ============================ 下載 worker ============================
+# ============================ Download worker ============================
 
 def _expand_targets(token, targets):
-    """把 project / folder / item 目標展開成扁平 item 清單。"""
+    """Expand project / folder / item targets into a flat item list."""
     items = []
     for t in targets:
         ttype = t.get('type')
@@ -192,7 +196,7 @@ def _download_worker(output_root, targets):
         _write_log(output_root)
     except Exception as e:
         with LOCK:
-            PROGRESS['results']['failed'].append({'name': '(整體流程)', 'error': str(e)})
+            PROGRESS['results']['failed'].append({'name': '(overall process)', 'error': str(e)})
     finally:
         with LOCK:
             PROGRESS['running'] = False
@@ -206,8 +210,8 @@ def _write_log(output_root):
         path = os.path.join(output_root, 'export_log.txt')
         r = PROGRESS['results']
         with open(path, 'w', encoding='utf-8') as fh:
-            for key, title in [('exported', '成功'), ('skipped', '已存在略過'),
-                               ('no_native', '無原生格式'), ('failed', '失敗')]:
+            for key, title in [('exported', 'Exported'), ('skipped', 'Already exists (skipped)'),
+                               ('no_native', 'No native format'), ('failed', 'Failed')]:
                 fh.write('=== {} ({}) ===\n'.format(title, len(r[key])))
                 for e in r[key]:
                     line = '{}/{}'.format(e.get('rel_path', ''), e.get('name', ''))
@@ -219,14 +223,14 @@ def _write_log(output_root):
         pass
 
 
-# ============================ 路由：頁面 ============================
+# ============================ Routes: page ============================
 
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
 
-# ============================ 路由：設定 ============================
+# ============================ Routes: config ============================
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
@@ -253,12 +257,12 @@ def set_config():
     return jsonify({'ok': True})
 
 
-# ============================ 路由：OAuth ============================
+# ============================ Routes: OAuth ============================
 
 @app.route('/api/auth/login')
 def auth_login():
     if not CONFIG['client_id'] or not CONFIG['client_secret']:
-        return 'Client ID / Secret 尚未設定，請先回首頁的「設定」填入。', 400
+        return 'Client ID / Secret not set yet. Fill them in under "Settings" on the home page first.', 400
     auth_url = aps.BASE + '/authentication/v2/authorize?' + urlencode({
         'response_type': 'code',
         'client_id': CONFIG['client_id'],
@@ -272,7 +276,7 @@ def auth_login():
 def auth_callback():
     code = request.args.get('code')
     if not code:
-        return '授權失敗：{}'.format(request.args.get('error_description', 'no code')), 400
+        return 'Authorization failed: {}'.format(request.args.get('error_description', 'no code')), 400
     resp = requests.post(aps.BASE + '/authentication/v2/token', data={
         'grant_type': 'authorization_code',
         'code': code,
@@ -281,7 +285,7 @@ def auth_callback():
         'client_secret': CONFIG['client_secret'],
     })
     if resp.status_code != 200:
-        return '換 token 失敗 {}：{}'.format(resp.status_code, resp.text), 400
+        return 'Token exchange failed {}: {}'.format(resp.status_code, resp.text), 400
     aps._save_token(resp.json())
     return redirect('/')
 
@@ -296,7 +300,7 @@ def auth_logout():
     return jsonify({'ok': True})
 
 
-# ============================ 路由：瀏覽資料 ============================
+# ============================ Routes: browse data ============================
 
 def _auth_guard():
     if not is_authenticated():
@@ -350,7 +354,7 @@ def api_contents():
     })
 
 
-# ============================ 路由：下載 / 進度 ============================
+# ============================ Routes: download / progress ============================
 
 @app.route('/api/download', methods=['POST'])
 def api_download():
@@ -359,11 +363,11 @@ def api_download():
         return g
     with LOCK:
         if PROGRESS['running']:
-            return jsonify({'error': '已有下載在進行中'}), 409
+            return jsonify({'error': 'A download is already in progress'}), 409
     body = request.get_json(force=True)
     targets = body.get('targets', [])
     if not targets:
-        return jsonify({'error': '沒有選取任何項目'}), 400
+        return jsonify({'error': 'No items selected'}), 400
     output_root = os.path.expanduser(body.get('output_root') or CONFIG['output_root'])
     _reset_progress(output_root)
     threading.Thread(target=_download_worker, args=(output_root, targets), daemon=True).start()
@@ -385,10 +389,10 @@ def api_cancel():
 
 if __name__ == '__main__':
     url = 'http://localhost:{}'.format(PORT)
-    print('APS Archiver UI 啟動：' + url)
-    print('（OAuth callback 已設為 {}）'.format(aps.CALLBACK_URL))
-    print('瀏覽器會自動打開；若沒有，手動開上面的網址。結束請關閉視窗或按 Ctrl+C。')
-    # 啟動後自動打開瀏覽器（可用 APS_NO_BROWSER=1 關閉）
+    print('APS Archiver UI started: ' + url)
+    print('(OAuth callback is set to {})'.format(aps.CALLBACK_URL))
+    print('The browser will open automatically; if not, open the URL above. To stop, close this window or press Ctrl+C.')
+    # Open the browser automatically after startup (disable with APS_NO_BROWSER=1)
     if os.environ.get('APS_NO_BROWSER') != '1':
         import webbrowser
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()

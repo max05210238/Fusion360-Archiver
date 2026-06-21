@@ -1,37 +1,40 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-路線 B — 用 APS (Autodesk Platform Services / 舊稱 Forge) Data Management API
-        全自動下載整個個人 hub 的「原生 Fusion 檔」（含組立件 f3z）。
+Route B — Use the APS (Autodesk Platform Services, formerly Forge) Data Management API
+          to automatically download every native Fusion file (including assemblies as f3z)
+          from your personal hub.
 
-為什麼這條路能拿到 Fusion 內建 API 拿不到的東西：
-    我們不直接抓雲端 raw storage 物件，而是用官方 Downloads API：
-        GET  .../versions/{ver}/downloadFormats   列出該版本可下載格式（f3d / f3z）
-        POST .../projects/{proj}/downloads         指定格式建立下載 job
+Why this path can get what the in-Fusion API cannot:
+    Instead of grabbing the raw cloud storage object directly, we use the official
+    Downloads API:
+        GET  .../versions/{ver}/downloadFormats   list downloadable formats (f3d / f3z)
+        POST .../projects/{proj}/downloads         create a download job for a format
         poll .../projects/{proj}/jobs|downloads/{id}
-        最後拿到 storage 物件 -> signed S3 下載
-    官方產出的 f3z 會「打包組立件的所有 linked components」，
-    所以這條路連組立件都能拿到可重新上傳的原生檔。
+        finally get the storage object -> signed S3 download
+    The official f3z that comes out "packages all linked components of the assembly",
+    so this path yields re-uploadable native files even for assemblies.
 
-⚠️ 個人 hub（A360 Personal）在 APS 的可見性歷來偶有限制 —— 這是本路線唯一真風險。
-   先用 `--spike` 模式驗證：能列出 project + 能對 1 個檔成功跑完 Downloads API，
-   再用 `--all` 跑整套。
+WARNING: visibility of a personal hub (A360 Personal) over APS has historically been
+   inconsistent -- this is the only real risk of this route. Validate first with
+   `--spike` (can list projects + can complete the Downloads API on one file), then
+   run the full job with `--all`.
 
-需求：
-    pip install -r requirements.txt   (只需 requests)
-    在 https://aps.autodesk.com 建一個 App，拿 Client ID / Secret，
-    把 Callback URL 設成與下方 CALLBACK_URL 完全一致（預設
-    http://localhost:8080/api/auth/callback）。
+Requirements:
+    pip install -r requirements.txt   (only requests is needed)
+    Create an App at https://aps.autodesk.com to get a Client ID / Secret, and set the
+    Callback URL to exactly match CALLBACK_URL below (default
+    http://localhost:8080/api/auth/callback).
 
-設定（環境變數，或直接改下方常數）：
+Configuration (environment variables, or edit the constants below):
     APS_CLIENT_ID, APS_CLIENT_SECRET, APS_CALLBACK_URL, APS_OUTPUT_ROOT
 
-用法：
-    python aps_archiver.py --spike     # 驗證個人 hub + Downloads API（先跑這個）
-    python aps_archiver.py --list      # 只列出 hub/project/folder/item 樹狀結構
-    python aps_archiver.py --all       # 全自動下載，保留結構，可重跑
+Usage:
+    python aps_archiver.py --spike     # validate personal hub + Downloads API (run this first)
+    python aps_archiver.py --list      # just print the hub/project/folder/item tree
+    python aps_archiver.py --all       # full automatic download, preserves structure, re-runnable
 
-官方文件（細節以現行版為準）：
+Official docs (details follow the current version):
     OAuth v2     https://aps.autodesk.com/en/docs/oauth/v2/developers_guide/overview/
     Data Mgmt v2 https://aps.autodesk.com/en/docs/data/v2/developers_guide/overview/
     Downloads    https://aps.autodesk.com/blog/download-fusion-360-archives
@@ -49,9 +52,9 @@ from urllib.parse import urlencode, urlparse, parse_qs
 try:
     import requests
 except ImportError:
-    sys.exit('需要 requests：請先執行  pip install -r requirements.txt')
+    sys.exit('requests is required: run  pip install -r requirements.txt  first')
 
-# ============================ 設定區 ============================
+# ============================ Settings ============================
 
 CLIENT_ID     = os.environ.get('APS_CLIENT_ID', '')
 CLIENT_SECRET = os.environ.get('APS_CLIENT_SECRET', '')
@@ -62,17 +65,17 @@ SCOPES   = 'data:read account:read'
 BASE     = 'https://developer.api.autodesk.com'
 TOKEN_CACHE = os.path.expanduser('~/.aps_archiver_token.json')
 
-# 想拿到的原生格式，依優先序嘗試（組立件通常只有 f3z，單體有 f3d）。
+# Native formats to try, in priority order (assemblies usually only have f3z, singles have f3d).
 PREFERRED_FORMATS = ['f3z', 'f3d']
 
-# 連線重試
+# Connection retries
 MAX_RETRIES = 4
-JOB_POLL_TIMEOUT = 300   # 單檔 Downloads job 最長等待秒數
+JOB_POLL_TIMEOUT = 300   # max seconds to wait for a single Downloads job
 JOB_POLL_INTERVAL = 3
 
 JSONAPI_HEADERS = {'Content-Type': 'application/vnd.api+json'}
 
-# ============================ 小工具 ============================
+# ============================ Helpers ============================
 
 def log(msg):
     print(msg, flush=True)
@@ -94,17 +97,17 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         qs = parse_qs(urlparse(self.path).query)
         if 'code' in qs:
             _CallbackHandler.code = qs['code'][0]
-            body = '授權成功，可關閉此分頁回到終端機。'
+            body = 'Authorization succeeded. You can close this tab and return to the terminal.'
         else:
             _CallbackHandler.error = qs.get('error_description', qs.get('error', ['unknown']))[0]
-            body = '授權失敗：{}'.format(_CallbackHandler.error)
+            body = 'Authorization failed: {}'.format(_CallbackHandler.error)
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.end_headers()
         self.wfile.write(('<html><body><h3>%s</h3></body></html>' % body).encode('utf-8'))
 
     def log_message(self, *args):
-        pass  # 靜音 http server 預設 log
+        pass  # silence the default http server log
 
 
 def _load_cached_token():
@@ -128,7 +131,7 @@ def _token_valid(tok):
     if not tok or 'access_token' not in tok:
         return False
     age = time.time() - tok.get('_obtained_at', 0)
-    return age < (tok.get('expires_in', 3600) - 120)  # 留 2 分鐘 buffer
+    return age < (tok.get('expires_in', 3600) - 120)  # keep a 2-minute buffer
 
 
 def _refresh_token(tok):
@@ -144,15 +147,15 @@ def _refresh_token(tok):
     if resp.status_code == 200:
         new = resp.json()
         _save_token(new)
-        log('已用 refresh token 換到新 access token。')
+        log('Refreshed access token using the refresh token.')
         return new
-    log('refresh token 失效，需重新登入。')
+    log('Refresh token is invalid; a new login is required.')
     return None
 
 
 def _interactive_login():
     if not CLIENT_ID or not CLIENT_SECRET:
-        sys.exit('缺少 APS_CLIENT_ID / APS_CLIENT_SECRET，請先設定環境變數或改 aps_archiver.py 設定區。')
+        sys.exit('Missing APS_CLIENT_ID / APS_CLIENT_SECRET. Set the env vars or edit the settings in aps_archiver.py.')
 
     parsed = urlparse(CALLBACK_URL)
     host = parsed.hostname or 'localhost'
@@ -165,7 +168,7 @@ def _interactive_login():
         'scope': SCOPES,
     })
 
-    log('開啟瀏覽器登入 Autodesk…如果沒自動跳出，手動開啟：\n' + auth_url)
+    log('Opening the browser to sign in to Autodesk... if it does not pop up, open this manually:\n' + auth_url)
     _CallbackHandler.code = None
     _CallbackHandler.error = None
     server = HTTPServer((host, port), _CallbackHandler)
@@ -175,7 +178,7 @@ def _interactive_login():
     server.server_close()
 
     if _CallbackHandler.error:
-        sys.exit('授權失敗：{}'.format(_CallbackHandler.error))
+        sys.exit('Authorization failed: {}'.format(_CallbackHandler.error))
 
     resp = requests.post(BASE + '/authentication/v2/token', data={
         'grant_type': 'authorization_code',
@@ -185,10 +188,10 @@ def _interactive_login():
         'client_secret': CLIENT_SECRET,
     })
     if resp.status_code != 200:
-        sys.exit('換 token 失敗 {}：{}'.format(resp.status_code, resp.text))
+        sys.exit('Token exchange failed {}: {}'.format(resp.status_code, resp.text))
     tok = resp.json()
     _save_token(tok)
-    log('登入成功，token 已快取到 {}'.format(TOKEN_CACHE))
+    log('Signed in. Token cached to {}'.format(TOKEN_CACHE))
     return tok
 
 
@@ -202,13 +205,15 @@ def get_token():
     return _interactive_login()['access_token']
 
 
-# 取得 token 的方式可被替換：CLI 用 get_token（會在無 token 時開瀏覽器登入）；
-# Web UI 會改成「只刷新、不開瀏覽器」的版本，避免在 callback 連接埠上撞到 Flask。
+# The way the token is obtained can be swapped out: the CLI uses get_token (opens a
+# browser to log in when there is no token); the Web UI replaces this with a
+# "refresh-only, never open a browser" version so it doesn't collide with Flask on
+# the callback port.
 _token_provider = get_token
 
 
 def set_token_provider(fn):
-    """讓 Web 後端注入自己的 token 取得函式。"""
+    """Let the web backend inject its own token-getter."""
     global _token_provider
     _token_provider = fn
 
@@ -231,12 +236,12 @@ def api_get(path, token, params=None, full_url=None, accept_jsonapi=False):
             continue
         if r.status_code in (429, 500, 502, 503, 504):
             wait = 2 ** attempt
-            log('  {} on {} — {}s 後重試'.format(r.status_code, url, wait))
+            log('  {} on {} -- retrying in {}s'.format(r.status_code, url, wait))
             time.sleep(wait)
             continue
         r.raise_for_status()
         return r.json()
-    raise RuntimeError('GET 重試多次仍失敗：{}'.format(url))
+    raise RuntimeError('GET failed after retries: {}'.format(url))
 
 
 def api_post(path, token, body):
@@ -253,12 +258,12 @@ def api_post(path, token, body):
             time.sleep(2 ** attempt)
             continue
         if r.status_code not in (200, 201, 202):
-            raise RuntimeError('POST {} -> {}：{}'.format(url, r.status_code, r.text))
+            raise RuntimeError('POST {} -> {}: {}'.format(url, r.status_code, r.text))
         return r.json()
-    raise RuntimeError('POST 重試多次仍失敗：{}'.format(url))
+    raise RuntimeError('POST failed after retries: {}'.format(url))
 
 
-# ======================= 遍歷 Data Management =======================
+# ======================= Traverse Data Management =======================
 
 def list_hubs(token):
     data = api_get('/project/v1/hubs', token)
@@ -280,7 +285,7 @@ def get_root_folder(token, hub_id, project_id):
 
 
 def folder_contents(token, project_id, folder_id):
-    """回傳 (folders, items)。items 每筆附帶 tip 版本 id。"""
+    """Return (folders, items). Each item carries its tip version id."""
     folders, items = [], []
     url = BASE + '/data/v1/projects/{}/folders/{}/contents'.format(project_id, folder_id)
     while url:
@@ -297,7 +302,7 @@ def folder_contents(token, project_id, folder_id):
 
 
 def download_formats(token, project_id, version_id):
-    """列出該版本可下載格式（如 f3d / f3z）。回傳格式字串集合。"""
+    """List the downloadable formats for a version (e.g. f3d / f3z). Returns a set of format strings."""
     from urllib.parse import quote
     path = '/data/v1/projects/{}/versions/{}/downloadFormats'.format(project_id, quote(version_id, safe=''))
     data = api_get(path, token, accept_jsonapi=True)
@@ -310,7 +315,7 @@ def download_formats(token, project_id, version_id):
 
 
 def create_download(token, project_id, version_id, file_type):
-    """建立 Downloads job，回傳 POST 的原始回應（可能是 job 或直接 download）。"""
+    """Create a Downloads job; returns the raw POST response (may be a job or a finished download)."""
     body = {
         'jsonapi': {'version': '1.0'},
         'data': {
@@ -326,17 +331,17 @@ def create_download(token, project_id, version_id, file_type):
 
 def resolve_download_storage(token, project_id, post_resp):
     """
-    從 create_download 的回應拿到最終 storage 物件 id（urn:adsk.objects:os.object:...）。
-    回應可能是：
-      - 直接 type=downloads（已完成）
-      - type=jobs（需輪詢）
+    From the create_download response, get the final storage object id
+    (urn:adsk.objects:os.object:...). The response may be:
+      - directly type=downloads (already finished)
+      - type=jobs (needs polling)
     """
     data = post_resp.get('data', {})
     dtype = data.get('type')
 
     def storage_from_download(dl):
         rel = dl.get('relationships', {}).get('storage', {})
-        # 優先用直接下載連結
+        # prefer the direct download link
         link = rel.get('meta', {}).get('link', {}).get('href')
         oid = rel.get('data', {}).get('id')
         return oid, link
@@ -344,7 +349,7 @@ def resolve_download_storage(token, project_id, post_resp):
     if dtype == 'downloads':
         return storage_from_download(data)
 
-    # 走 job 輪詢：用回應裡的 self link，否則組 /downloads/{id}
+    # Poll the job: use the self link from the response, else build /downloads/{id}
     job_id = data.get('id')
     self_link = post_resp.get('links', {}).get('self', {}).get('href')
     deadline = time.time() + JOB_POLL_TIMEOUT
@@ -360,13 +365,13 @@ def resolve_download_storage(token, project_id, post_resp):
         if pdata.get('type') == 'downloads' and pdata.get('relationships', {}).get('storage'):
             return storage_from_download(pdata)
         if status in ('failed', 'cancelled'):
-            raise RuntimeError('Downloads job 失敗：{}'.format(json.dumps(pdata)))
-        # status == 'processing' / 'inprogress' -> 繼續等
-    raise RuntimeError('Downloads job 等待逾時（{}s）'.format(JOB_POLL_TIMEOUT))
+            raise RuntimeError('Downloads job failed: {}'.format(json.dumps(pdata)))
+        # status == 'processing' / 'inprogress' -> keep waiting
+    raise RuntimeError('Downloads job timed out ({}s)'.format(JOB_POLL_TIMEOUT))
 
 
 def signed_s3_download_url(token, object_id):
-    """object_id 形如 urn:adsk.objects:os.object:{bucket}/{object}。"""
+    """object_id looks like urn:adsk.objects:os.object:{bucket}/{object}."""
     tail = object_id.split('os.object:', 1)[1]
     bucket, obj = tail.split('/', 1)
     from urllib.parse import quote
@@ -389,7 +394,8 @@ def download_to(url, dest_path):
 
 
 def fetch_native(token, project_id, version_id, dest_no_ext):
-    """對一個版本，挑可用原生格式下載到 dest_no_ext + 副檔名。回傳 (dest_path, file_type) 或 None。"""
+    """For one version, pick an available native format and download to dest_no_ext + ext.
+    Returns (dest_path, file_type) or (None, available_formats)."""
     fmts = download_formats(token, project_id, version_id)
     chosen = next((f for f in PREFERRED_FORMATS if f in fmts), None)
     if not chosen:
@@ -399,28 +405,28 @@ def fetch_native(token, project_id, version_id, dest_no_ext):
     url = direct_link or signed_s3_download_url(token, object_id)
     dest = dest_no_ext + '.' + chosen
     if os.path.exists(dest):
-        return dest, chosen   # 已存在，視為完成（可重跑）
+        return dest, chosen   # already exists, treat as done (re-runnable)
     download_to(url, dest)
     return dest, chosen
 
 
-# ======================= 模式：list / spike / all =======================
+# ======================= Modes: list / spike / all =======================
 
 def mode_list(token):
     hubs = list_hubs(token)
-    log('找到 {} 個 hub：'.format(len(hubs)))
+    log('Found {} hub(s):'.format(len(hubs)))
     for h in hubs:
         hid = h['id']
         hname = h['attributes']['name']
         log('\n[HUB] {}  ({})'.format(hname, hid))
         projs = list_projects(token, hid)
-        log('  {} 個 project'.format(len(projs)))
+        log('  {} project(s)'.format(len(projs)))
         for p in projs:
             log('  - {}  ({})'.format(p['attributes']['name'], p['id']))
 
 
 def _iter_all_items(token, hub_id, project_id, folder_id, rel_path):
-    """深度遍歷，yield (rel_path, item_obj)。"""
+    """Depth-first traversal, yields (rel_path, item_obj)."""
     folders, items = folder_contents(token, project_id, folder_id)
     for it in items:
         yield rel_path, it
@@ -431,12 +437,12 @@ def _iter_all_items(token, hub_id, project_id, folder_id, rel_path):
 
 
 def mode_spike(token):
-    log('=== SPIKE：驗證個人 hub 可讀 + Downloads API 可產原生檔 ===\n')
+    log('=== SPIKE: validate personal hub is readable + Downloads API yields native files ===\n')
     hubs = list_hubs(token)
     if not hubs:
-        log('❌ 風險點 1 失敗：APS 列不出任何 hub（個人 hub 可能不開放）。')
+        log('FAIL (risk 1): APS lists no hubs (the personal hub may not be exposed).')
         return
-    log('✅ 可列出 {} 個 hub。'.format(len(hubs)))
+    log('OK: listed {} hub(s).'.format(len(hubs)))
 
     tested = 0
     for h in hubs:
@@ -450,31 +456,31 @@ def mode_spike(token):
             try:
                 root = get_root_folder(token, hid, pid)
             except Exception as e:
-                log('    讀 rootFolder 失敗 {}: {}'.format(p['attributes']['name'], e))
+                log('    failed to read rootFolder {}: {}'.format(p['attributes']['name'], e))
                 continue
             for rel, it in _iter_all_items(token, hid, pid, root, safe_name(p['attributes']['name'])):
                 vid = it.get('_tip_version_id')
                 iname = it['attributes'].get('displayName', 'item')
                 if not vid:
                     continue
-                log('\n  測試檔：{}/{}'.format(rel, iname))
+                log('\n  testing file: {}/{}'.format(rel, iname))
                 try:
                     fmts = download_formats(token, pid, vid)
-                    log('    downloadFormats -> {}'.format(sorted(fmts) or '（無）'))
+                    log('    downloadFormats -> {}'.format(sorted(fmts) or '(none)'))
                     if not fmts:
-                        log('    ⚠️ 此版本無可下載格式，換下一個。')
+                        log('    note: this version has no downloadable formats, trying the next one.')
                         continue
                     dest_base = os.path.join('/tmp/aps_spike', safe_name(iname))
                     dest, ft = fetch_native(token, pid, vid, dest_base)
                     if dest:
                         size = os.path.getsize(dest)
-                        log('    ✅ 下載成功：{}  ({} bytes, 格式 {})'.format(dest, size, ft))
-                        log('       -> 解開 .f3z 確認是否含全部 linked 零件，即驗證風險點 2。')
+                        log('    OK downloaded: {}  ({} bytes, format {})'.format(dest, size, ft))
+                        log('       -> unzip the .f3z to confirm it contains all linked parts (validates risk 2).')
                         tested += 1
                     else:
-                        log('    ⚠️ 無偏好原生格式可下載。')
+                        log('    note: no preferred native format available.')
                 except Exception as e:
-                    log('    ❌ Downloads API 失敗：{}'.format(e))
+                    log('    FAIL Downloads API: {}'.format(e))
                 if tested >= 2:
                     break
             if tested >= 2:
@@ -482,21 +488,22 @@ def mode_spike(token):
         if tested >= 2:
             break
 
-    log('\n=== SPIKE 結論 ===')
+    log('\n=== SPIKE conclusion ===')
     if tested > 0:
-        log('✅ 個人 hub 可讀，且至少 {} 個檔成功跑完 Downloads API。'.format(tested))
-        log('   下一步：手動解開下載到 /tmp/aps_spike 的 .f3z 確認含 linked 零件，')
-        log('   通過後即可放心用 `--all` 全自動跑整套。')
+        log('OK: personal hub is readable, and at least {} file(s) completed the Downloads API.'.format(tested))
+        log('   Next: manually unzip the .f3z downloaded to /tmp/aps_spike to confirm it')
+        log('   contains the linked parts. Once confirmed, run `--all` for the full job.')
     else:
-        log('❌ 沒有任何檔成功。請看上面錯誤；若是 hub 列不出/讀不到，')
-        log('   個人 hub APS 不通 -> 退回路線 A + 照 manual_download_list.txt 手動下載。')
+        log('FAIL: no file succeeded. See the errors above; if hubs cannot be listed/read,')
+        log('   the personal hub is not reachable over APS -> fall back to Route A + the')
+        log('   manual_download_list.txt for manual downloads.')
 
 
 def mode_all(token):
     os.makedirs(OUTPUT_ROOT, exist_ok=True)
     results = {'exported': [], 'skipped': [], 'failed': [], 'no_native': []}
     hubs = list_hubs(token)
-    log('開始全量下載，{} 個 hub -> {}'.format(len(hubs), OUTPUT_ROOT))
+    log('Starting full download, {} hub(s) -> {}'.format(len(hubs), OUTPUT_ROOT))
 
     for h in hubs:
         hid, hname = h['id'], h['attributes']['name']
@@ -514,27 +521,27 @@ def mode_all(token):
                 rel_dir = os.path.join(OUTPUT_ROOT, rel)
                 dest_base = os.path.join(rel_dir, safe_name(os.path.splitext(iname)[0]))
                 if not vid:
-                    results['skipped'].append('{}/{} (無 tip 版本)'.format(rel, iname))
+                    results['skipped'].append('{}/{} (no tip version)'.format(rel, iname))
                     continue
                 try:
                     dest, ft = fetch_native(token, pid, vid, dest_base)
                     if dest:
                         results['exported'].append(dest)
-                        log('  ✓ {}  [{}]'.format(dest, ft))
+                        log('  + {}  [{}]'.format(dest, ft))
                     else:
-                        results['no_native'].append('{}/{} (可用格式: {})'.format(rel, iname, sorted(ft)))
-                        log('  - 無原生格式：{}/{}'.format(rel, iname))
+                        results['no_native'].append('{}/{} (available formats: {})'.format(rel, iname, sorted(ft)))
+                        log('  - no native format: {}/{}'.format(rel, iname))
                 except Exception as e:
                     results['failed'].append('{}/{}: {}'.format(rel, iname, e))
-                    log('  ✗ {}/{}: {}'.format(rel, iname, e))
+                    log('  x {}/{}: {}'.format(rel, iname, e))
 
     log_path = os.path.join(OUTPUT_ROOT, 'export_log.txt')
     with open(log_path, 'w', encoding='utf-8') as fh:
-        for key, title in [('exported', '成功'), ('skipped', '跳過'),
-                           ('no_native', '無原生格式'), ('failed', '失敗')]:
+        for key, title in [('exported', 'Exported'), ('skipped', 'Skipped'),
+                           ('no_native', 'No native format'), ('failed', 'Failed')]:
             fh.write('=== {} ({}) ===\n'.format(title, len(results[key])))
             fh.write('\n'.join(map(str, results[key])) + '\n\n')
-    log('\n完成。成功 {} / 跳過 {} / 無原生 {} / 失敗 {}\n詳見 {}'.format(
+    log('\nDone. Exported {} / skipped {} / no-native {} / failed {}\nSee {}'.format(
         len(results['exported']), len(results['skipped']),
         len(results['no_native']), len(results['failed']), log_path))
 
@@ -542,11 +549,11 @@ def mode_all(token):
 # ======================= main =======================
 
 def main():
-    ap = argparse.ArgumentParser(description='APS 全自動下載 Fusion 原生檔（路線 B）')
+    ap = argparse.ArgumentParser(description='Automatically download native Fusion files via APS (Route B)')
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument('--spike', action='store_true', help='驗證個人 hub + Downloads API（先跑這個）')
-    g.add_argument('--list', action='store_true', help='只列出 hub/project 結構')
-    g.add_argument('--all', action='store_true', help='全自動下載整個 hub')
+    g.add_argument('--spike', action='store_true', help='validate personal hub + Downloads API (run this first)')
+    g.add_argument('--list', action='store_true', help='only print the hub/project structure')
+    g.add_argument('--all', action='store_true', help='download the entire hub automatically')
     args = ap.parse_args()
 
     token = get_token()
