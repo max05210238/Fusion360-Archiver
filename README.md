@@ -307,6 +307,36 @@ have to upload them one by one.
   never does that. The official **Data Panel ▸ Upload** is the reliable, supported way to restore, and
   it's just a file picker. Keeping restore manual is the safer choice.
 
+## Is this safe? (you don't have to trust me)
+
+Healthy skepticism is correct — **never give an unknown app access to your data on faith.** This tool
+is built so you don't have to trust the author; you can *verify* instead:
+
+- **It runs entirely on your own computer.** There is no server run by the author. It's a small local
+  program at `http://localhost:8080`. Your designs move **directly between your machine and Autodesk** —
+  they never touch the author or any third party.
+- **You use your own Autodesk app and your own keys.** You create the APS app under *your* account; the
+  login token is stored only on your machine and you can revoke it anytime by deleting the app. The
+  author never receives your keys, token, or files.
+- **It cannot delete or overwrite your designs.** It requests `data:read` + `data:create` (the latter
+  only because Autodesk's download API requires it to build the archive). It never requests write or
+  delete scopes and never calls them. Worst case, it reads and downloads.
+- **It only talks to Autodesk.** The only network destinations in the code are
+  `developer.api.autodesk.com` (Autodesk) and `localhost` (your machine). No telemetry, no analytics,
+  no phone-home — search the code for `http` and check.
+- **It's tiny and dependency-light.** A couple of readable files (one Python backend, one HTML page) and
+  two well-known libraries (`requests`, `flask`). You — or an AI like Claude/ChatGPT — can audit the
+  whole thing in minutes.
+- **It's AI-written, and we say so.** The author isn't a developer; the code was written by an AI from a
+  problem description (see the disclaimer above). That's exactly *why* it's small, open, and auditable.
+
+**How to verify before you run it:**
+1. Read `route_b/app.py` and `route_b/aps_archiver.py` (or paste them into an AI and ask: "does this do
+   anything besides read and download my own Autodesk data?").
+2. Confirm the only URLs are Autodesk + `localhost`.
+3. Use least privilege: enable only the **Data Management API**, and **delete your APS app when you're
+   done** (which revokes all access).
+
 ## Data security: your API keys and permissions
 
 This tool downloads using **your own Autodesk authorization** (3-legged OAuth). Three things are
