@@ -24,6 +24,8 @@ Start:
 
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 from urllib.parse import urlencode
@@ -255,6 +257,35 @@ def set_config():
     save_config(CONFIG)
     _apply_config_to_aps()
     return jsonify({'ok': True})
+
+
+@app.route('/api/pick-folder', methods=['POST'])
+def pick_folder():
+    """Open a native folder picker on this machine (the server runs locally) and return the path."""
+    try:
+        if sys.platform == 'darwin':
+            script = ('POSIX path of (choose folder with prompt '
+                      '"Choose where to save your Fusion backup")')
+            r = subprocess.run(['osascript', '-e', script],
+                               capture_output=True, text=True, timeout=180)
+            path = r.stdout.strip()
+            if path:
+                return jsonify({'path': path.rstrip('/')})
+            return jsonify({'cancelled': True})
+        else:
+            # tkinter fallback for Windows / Linux
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            path = filedialog.askdirectory()
+            root.destroy()
+            if path:
+                return jsonify({'path': path})
+            return jsonify({'cancelled': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 # ============================ Routes: OAuth ============================

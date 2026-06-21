@@ -72,12 +72,23 @@
   <section style="display:flex; flex-direction:column; gap:16px;">
     <div class="panel">
       <h2>1. Settings</h2>
+      <div class="note" style="margin:0 0 10px; padding:10px; background:#10141c; border:1px solid var(--line); border-radius:8px;">
+        <b style="color:var(--txt)">First time?</b> You need two keys from Autodesk (one-time, ~2 min):
+        <a href="https://aps.autodesk.com/myapps" target="_blank">open the Autodesk app page ↗</a>,
+        click <b>Create application</b>, enable <b>Data Management API</b>, set the
+        <b>Callback URL</b> to the value shown below, then copy the Client ID &amp; Secret here.
+        See the full guide in the project's <code>docs/USER_GUIDE.md</code>.
+      </div>
       <label>APS Client ID</label>
-      <input id="clientId" type="text" placeholder="Get it from aps.autodesk.com">
+      <input id="clientId" type="text" placeholder="Paste the Client ID from aps.autodesk.com">
       <label>APS Client Secret</label>
       <input id="clientSecret" type="password" placeholder="(leave blank to keep the saved one)">
       <label>Download path</label>
-      <input id="outputRoot" type="text" placeholder="~/Desktop/Fusion_Backup_APS">
+      <div class="row">
+        <input id="outputRoot" type="text" placeholder="~/Desktop/Fusion_Backup_APS" style="flex:1;">
+        <button id="browseBtn" class="ghost" title="Pick a folder">Browse…</button>
+      </div>
+      <div class="note">The default is fine — files go to a folder on your Desktop. Only change this if you want a different location.</div>
       <div class="row" style="margin-top:12px;">
         <button id="saveCfg" class="primary">Save settings</button>
         <span id="cfgMsg" class="small muted"></span>
@@ -176,6 +187,15 @@ $('#saveCfg').onclick = async () => {
   $('#cfgMsg').textContent = 'Saved ✓';
   setTimeout(()=>$('#cfgMsg').textContent='', 2000);
   loadConfig();
+};
+$('#browseBtn').onclick = async () => {
+  const btn = $('#browseBtn'); const old = btn.textContent;
+  btn.textContent = 'Opening…'; btn.disabled = true;
+  try{
+    const r = await api('/api/pick-folder', {method:'POST'});
+    if(r.path) $('#outputRoot').value = r.path;
+  }catch(e){ $('#cfgMsg').innerHTML = '<span class="err">Could not open the folder picker: '+e.message+'</span>'; }
+  finally{ btn.textContent = old; btn.disabled = false; }
 };
 $('#loginBtn').onclick = () => { window.location = '/api/auth/login'; };
 $('#logoutBtn').onclick = async () => {
