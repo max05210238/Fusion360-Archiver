@@ -1,0 +1,98 @@
+# Fusion360-Archiver
+
+批次下載整個 Autodesk / Fusion 360 個人帳號的**原生檔**（`.f3d` / `.f3z`）到本機，保留「專案 / 資料夾」結構。
+
+## 為什麼要兩條路線
+
+Fusion 的 `adsk.*` 內建 API **拿不到含外部參照（linked components）的組立件原生檔** —— 這是 API 天花板，不是腳本問題。所以分流處理：
+
+| | 路線 A（Fusion 內腳本） | 路線 B（APS REST API） |
+|---|---|---|
+| 形式 | 在 Fusion GUI 內手動 Run 的 Script | 本機 headless 跑的 Python |
+| 單體設計 f3d | ✅ | ✅ |
+| 組立件原生檔 | ❌（只能列入待手動清單） | ✅ 官方 Downloads API 產 f3z（打包 linked 零件） |
+| 無人值守 | 需手動觸發 | 一次瀏覽器登入後全自動 |
+| 角色 | **備援** | **主力** |
+
+> **建議順序：先跑路線 B 的 `--spike` 驗證個人 hub 通不通；通了就用 `--all` 一次清空（含組立件）。萬一個人 hub 在 APS 不開放，才退回路線 A 收單體 f3d ＋ 照清單手動補組立件。**
+
+---
+
+## 路線 B — APS 全自動（主力）
+
+### 1. 建立 APS App
+1. 到 <https://aps.autodesk.com> 登入，建立一個 App。
+2. 記下 **Client ID** 與 **Client Secret**。
+3. App 的 **Callback URL** 設為與腳本一致（預設）：
+   ```
+   http://localhost:8080/api/auth/callback
+   ```
+
+### 2. 安裝與設定
+```bash
+cd route_b
+pip install -r requirements.txt
+
+export APS_CLIENT_ID=你的ClientID
+export APS_CLIENT_SECRET=你的ClientSecret
+# 可選：自訂輸出位置 / callback
+export APS_OUTPUT_ROOT="~/Desktop/Fusion_Backup_APS"
+# export APS_CALLBACK_URL="http://localhost:8080/api/auth/callback"
+```
+
+### 3. 先 spike（強烈建議）
+```bash
+python aps_archiver.py --spike
+```
+會做兩件驗證並印出結果：
+- **風險點 1**：APS 能不能列出你的個人 hub / projects。
+- **風險點 2**：對 1～2 個檔跑完整 Downloads API，把原生檔抓到 `/tmp/aps_spike/`。
+
+spike 成功後，**手動解開**抓下來的 `.f3z`，確認裡面含全部 linked 零件（驗證組立件真的被打包）。
+
+### 4. 全量下載
+```bash
+python aps_archiver.py --all      # 保留結構、可重跑（已存在的檔自動略過）
+python aps_archiver.py --list     # 只想先看 hub/project 樹狀結構
+```
+輸出在 `APS_OUTPUT_ROOT`，含 `export_log.txt`（成功 / 跳過 / 無原生格式 / 失敗）。
+
+> 第一次執行會跳出瀏覽器要你登入 Autodesk 並授權；token 會快取到 `~/.aps_archiver_token.json`（已列入 `.gitignore`，請勿提交）。
+
+---
+
+## 路線 A — Fusion 內腳本（備援，只收單體 f3d）
+
+> 用於：個人 hub 在 APS 不通時，至少把單體設計的原生 f3d 收下來，並產出組立件的待手動清單。
+
+1. Fusion 開啟 → **Utilities ▸ ADD-INS ▸ Scripts and Add-Ins ▸ Scripts** 分頁。
+2. 按綠色 **「+」** 建立新 Script，把 `route_a/Fusion_Batch_Export_All.py` 的內容貼進 main 檔。
+3. （可選）改檔頭設定區：`OUTPUT_ROOT`、`PRESERVE_STRUCTURE`、`SKIP_IF_EXISTS`。
+4. 選取該 Script ▸ **Run**。它會走遍 active hub 所有專案，逐檔開啟匯出原生 f3d。
+
+跑完在輸出目錄產生：
+- `export_log.txt` — 成功 / 跳過 / 失敗 / 需手動 四類，含覆蓋率。
+- `manual_download_list.txt` — 所有含外部參照、API 出不了原生檔的組立件路徑。
+
+### 組立件怎麼補
+照 `manual_download_list.txt`：
+- 優先：用路線 B 的 `--all`／`--spike` 自動下載 f3z；
+- 不行才：在 Fusion **Data Panel** 對每個檔右鍵 **Download** 取得 `.f3z`。
+
+### macOS 注意
+社群回報 Project-Archiver 類腳本在 macOS 上連續開檔偶有讓 Fusion 崩潰。本腳本已逐檔 `try/except` 隔離、每檔之間 `adsk.doEvents()` + `document.close(False)` 釋放資源、單檔失敗不中斷全局，並可重跑（`SKIP_IF_EXISTS=True` 不重抓已下載的檔）。
+
+---
+
+## 已知地雷
+- **個人 hub 的 APS 可見性**：路線 B 唯一真風險，務必先 `--spike` 驗證，別寫完整套才發現拿不到。
+- **多 hub**：路線 A 一次只處理 active hub（需切換重跑）；路線 B 會一次遍歷所有 hub。
+- **存檔提示 / 非法字元 / 重複覆蓋**：兩條路線都已處理（唯讀關閉、清非法字元、同名略過或加序號）。
+
+## 檔案結構
+```
+route_a/Fusion_Batch_Export_All.py   路線 A：Fusion 內批次匯出 f3d + 生成待手動清單
+route_b/aps_archiver.py              路線 B：APS OAuth + 遍歷 + Downloads API 下載
+route_b/requirements.txt
+docs/Fusion_Native_Backup_BRIEF.md   原始任務簡報（背景與限制查證）
+```
