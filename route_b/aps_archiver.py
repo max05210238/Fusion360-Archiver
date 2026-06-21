@@ -535,6 +535,17 @@ def mode_all(token):
     hubs = list_hubs(token)
     log('Starting full download, {} hub(s) -> {}'.format(len(hubs), OUTPUT_ROOT))
 
+    # Disambiguate two distinct designs that share a name in the same folder (see the UI worker).
+    claimed = {}
+
+    def _unique_base(base, vid):
+        cand, n = base, 2
+        while claimed.get(cand, vid) != vid:
+            cand = '{} ({})'.format(base, n)
+            n += 1
+        claimed[cand] = vid
+        return cand
+
     for h in hubs:
         hid, hname = h['id'], h['attributes']['name']
         for p in list_projects(token, hid):
@@ -549,10 +560,10 @@ def mode_all(token):
                 vid = it.get('_tip_version_id')
                 iname = it['attributes'].get('displayName', 'item')
                 rel_dir = os.path.join(OUTPUT_ROOT, rel)
-                dest_base = os.path.join(rel_dir, safe_name(os.path.splitext(iname)[0]))
                 if not vid:
                     results['skipped'].append('{}/{} (no tip version)'.format(rel, iname))
                     continue
+                dest_base = _unique_base(os.path.join(rel_dir, safe_name(os.path.splitext(iname)[0])), vid)
                 try:
                     dest, ft = fetch_native(token, pid, vid, dest_base)
                     if dest:
