@@ -166,6 +166,19 @@ def _download_worker(output_root, targets):
             PROGRESS['total'] = len(items)
             PROGRESS['phase'] = 'downloading'
 
+        # Two distinct designs can share the same name in the same Fusion folder. Keep a per-run
+        # map so the second one gets a "(2)" suffix instead of being mistaken for an already-
+        # downloaded file and skipped (which would silently drop it from the backup).
+        claimed = {}  # dest_base -> version_id that owns it
+
+        def _unique_base(base, vid):
+            cand, n = base, 2
+            while claimed.get(cand, vid) != vid:
+                cand = '{} ({})'.format(base, n)
+                n += 1
+            claimed[cand] = vid
+            return cand
+
         for it in items:
             with LOCK:
                 if PROGRESS['cancel']:
@@ -173,7 +186,7 @@ def _download_worker(output_root, targets):
                 PROGRESS['current'] = '{}/{}'.format(it['rel_path'], it['name'])
             rel_dir = os.path.join(output_root, it['rel_path'])
             stem = aps.safe_name(os.path.splitext(it['name'])[0])
-            dest_base = os.path.join(rel_dir, stem)
+            dest_base = _unique_base(os.path.join(rel_dir, stem), it['version_id'])
             entry = {'name': it['name'], 'rel_path': it['rel_path'],
                      'project_id': it['project_id'], 'version_id': it['version_id']}
             try:
