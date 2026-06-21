@@ -18,7 +18,29 @@ Fusion 的 `adsk.*` 內建 API **拿不到含外部參照（linked components）
 
 ---
 
-## 路線 B — APS 全自動（主力）
+## 🖥️ 最簡單：用 Web UI 跑路線 B（推薦）
+
+不想碰指令的話，用內建的本機網頁介面：登入、勾選要下載的專案/資料夾、選路徑、執行、看結果、一鍵重抓漏檔，全部在瀏覽器點一點。
+
+```bash
+cd route_b
+pip install -r requirements.txt    # 若 flask 因系統 blinker 衝突，改用 pip install --ignore-installed blinker flask
+python app.py
+```
+然後瀏覽器開 <http://localhost:8080>，依畫面四個步驟：
+
+1. **① 設定**：貼上 APS Client ID / Secret、選下載路徑、按「儲存設定」。
+   （先到 <https://aps.autodesk.com> 建一個 App，Callback URL 填頁面上顯示的那一行，預設 `http://localhost:8080/api/auth/callback`。）
+2. **右上角「登入 Autodesk」**：跳轉瀏覽器授權，回來就顯示「已登入」。
+3. **② 選擇**：按「載入」列出 hub/專案，展開勾選；勾整個 project = 含其下全部設計。也可「全選所有 project」。
+4. **③ 執行**：按「開始下載所選」，看即時進度。
+5. **④ 結果分析**：分「成功 / 已存在 / 無原生格式 / 失敗」四類；有失敗時按 **「↻ 重抓所有失敗的漏檔」** 一鍵補抓（已下載的會自動略過）。
+
+> UI 與下方 CLI 共用同一套下載邏輯與唯讀權限；只下載、不刪改任何檔。第一次仍建議先用 CLI 的 `--spike` 驗證個人 hub 是否可讀（見下）。
+
+---
+
+## 路線 B（CLI）— APS 全自動
 
 ### 1. 建立 APS App
 1. 到 <https://aps.autodesk.com> 登入，建立一個 App。
@@ -92,7 +114,9 @@ python aps_archiver.py --list     # 只想先看 hub/project 樹狀結構
 ## 檔案結構
 ```
 route_a/Fusion_Batch_Export_All.py   路線 A：Fusion 內批次匯出 f3d + 生成待手動清單
-route_b/aps_archiver.py              路線 B：APS OAuth + 遍歷 + Downloads API 下載
+route_b/aps_archiver.py              路線 B 核心：APS OAuth + 遍歷 + Downloads API 下載（CLI 可獨立用）
+route_b/app.py                       路線 B Web UI 後端（Flask，包住上面的核心邏輯）
+route_b/static/index.html            Web UI 前端（登入/勾選/執行/結果/重抓）
 route_b/requirements.txt
 docs/Fusion_Native_Backup_BRIEF.md   原始任務簡報（背景與限制查證）
 ```

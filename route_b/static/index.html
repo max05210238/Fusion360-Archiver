@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fusion360 Archiver</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#272b35; --txt:#e6e8ec; --muted:#9aa3b2;
+          --accent:#4c8bf5; --ok:#3fb950; --warn:#d29922; --err:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,"PingFang TC","Segoe UI",sans-serif;
+         background:var(--bg); color:var(--txt); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex;
+           align-items:center; gap:14px; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  .badge { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); }
+  .badge.on { color:var(--ok); border-color:var(--ok); }
+  .badge.off { color:var(--muted); }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px 20px; }
+  @media (max-width:900px){ main{ grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted);
+              margin:0 0 12px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input[type=text], input[type=password] { width:100%; padding:8px 10px; background:#0f1218;
+     border:1px solid var(--line); border-radius:7px; color:var(--txt); }
+  button { cursor:pointer; border:1px solid var(--line); background:#1f2430; color:var(--txt);
+           padding:8px 14px; border-radius:7px; font-size:13px; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button.primary:disabled { opacity:.45; cursor:not-allowed; }
+  button.ghost { background:transparent; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .spacer { flex:1; }
+  .tree { max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:8px;
+          padding:8px; background:#0f1218; }
+  .node { padding:1px 0; }
+  .node .label { display:inline-flex; align-items:center; gap:6px; cursor:default; }
+  .twist { width:16px; display:inline-block; text-align:center; cursor:pointer; color:var(--muted); user-select:none; }
+  .kind { font-size:11px; color:var(--muted); }
+  .children { margin-left:18px; border-left:1px solid var(--line); padding-left:6px; }
+  .muted { color:var(--muted); }
+  .small { font-size:12px; }
+  progress { width:100%; height:10px; }
+  .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .tab { padding:5px 10px; border:1px solid var(--line); border-radius:999px; cursor:pointer; font-size:12px; }
+  .tab.active { border-color:var(--accent); color:var(--accent); }
+  .tab .c { opacity:.7; }
+  .results { max-height:300px; overflow:auto; font-size:12px; }
+  .res-item { padding:6px 8px; border-bottom:1px solid var(--line); display:flex; gap:8px; }
+  .res-item .path { color:var(--muted); }
+  .dot { width:8px; height:8px; border-radius:50%; margin-top:5px; flex:none; }
+  .dot.exported{background:var(--ok)} .dot.skipped{background:var(--accent)}
+  .dot.no_native{background:var(--warn)} .dot.failed{background:var(--err)}
+  .hide { display:none; }
+  .note { font-size:12px; color:var(--muted); margin-top:8px; }
+  a { color:var(--accent); }
+  .err { color:var(--err); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🗂️ Fusion360 Archiver</h1>
+  <span id="authBadge" class="badge off">未登入</span>
+  <div class="spacer"></div>
+  <button id="loginBtn" class="primary">登入 Autodesk</button>
+  <button id="logoutBtn" class="ghost hide">登出</button>
+</header>
+
+<main>
+  <!-- 左欄：設定 + 樹狀選擇 -->
+  <section style="display:flex; flex-direction:column; gap:16px;">
+    <div class="panel">
+      <h2>① 設定</h2>
+      <label>APS Client ID</label>
+      <input id="clientId" type="text" placeholder="從 aps.autodesk.com 取得">
+      <label>APS Client Secret</label>
+      <input id="clientSecret" type="password" placeholder="（已儲存則留空表示不變更）">
+      <label>下載路徑</label>
+      <input id="outputRoot" type="text" placeholder="~/Desktop/Fusion_Backup_APS">
+      <div class="row" style="margin-top:12px;">
+        <button id="saveCfg" class="primary">儲存設定</button>
+        <span id="cfgMsg" class="small muted"></span>
+      </div>
+      <div class="note">Callback URL：<code id="cbUrl">—</code>　請到 APS App 設定填一模一樣的值。</div>
+    </div>
+
+    <div class="panel">
+      <h2>② 選擇要下載的項目</h2>
+      <div class="row" style="margin-bottom:8px;">
+        <button id="refreshTree">載入 / 重新整理</button>
+        <button id="selectAll" class="ghost">全選所有 project</button>
+        <button id="clearSel" class="ghost">清除勾選</button>
+        <span class="spacer"></span>
+        <span id="selCount" class="small muted">已選 0</span>
+      </div>
+      <div id="tree" class="tree"><div class="muted small">登入後按「載入」列出你的 hub / 專案。</div></div>
+      <div class="note">勾選整個 project 或資料夾即代表「含其下全部設計」，後端會自動展開。</div>
+    </div>
+  </section>
+
+  <!-- 右欄：執行 + 進度 + 結果 -->
+  <section style="display:flex; flex-direction:column; gap:16px;">
+    <div class="panel">
+      <h2>③ 執行</h2>
+      <div class="row">
+        <button id="downloadBtn" class="primary" disabled>開始下載所選</button>
+        <button id="cancelBtn" class="ghost hide">取消</button>
+        <span id="runMsg" class="small muted"></span>
+      </div>
+      <div style="margin-top:14px;">
+        <div class="row small">
+          <span id="phase" class="muted">閒置</span>
+          <span class="spacer"></span>
+          <span id="counts" class="muted"></span>
+        </div>
+        <progress id="bar" value="0" max="100"></progress>
+        <div id="current" class="small muted" style="min-height:18px;"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>④ 結果分析</h2>
+      <div class="tabs" id="tabs">
+        <span class="tab active" data-k="exported">成功 <span class="c">(0)</span></span>
+        <span class="tab" data-k="skipped">已存在 <span class="c">(0)</span></span>
+        <span class="tab" data-k="no_native">無原生格式 <span class="c">(0)</span></span>
+        <span class="tab" data-k="failed">失敗 <span class="c">(0)</span></span>
+      </div>
+      <div class="row" style="margin-bottom:8px;">
+        <button id="retryBtn" class="ghost" disabled>↻ 重抓所有失敗的漏檔</button>
+        <span id="retryMsg" class="small muted"></span>
+      </div>
+      <div id="results" class="results"><div class="muted small">尚無結果。</div></div>
+      <div class="note">log 也會寫到下載路徑的 <code>export_log.txt</code>。重抓會自動略過已下載的檔。</div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = (url, opt) => fetch(url, opt).then(async r => {
+  const j = await r.json().catch(()=> ({}));
+  if (!r.ok) throw Object.assign(new Error(j.error||r.statusText), {status:r.status, body:j});
+  return j;
+});
+function safeName(n){ return n.replace(/[<>:"/\\|?*\n\r\t]/g,'_').trim().replace(/\.+$/,''); }
+
+let CFG = {};
+let pollTimer = null;
+let currentTab = 'exported';
+let lastResults = {exported:[],skipped:[],no_native:[],failed:[]};
+
+// ---------- 設定 / 認證 ----------
+async function loadConfig(){
+  CFG = await api('/api/config');
+  $('#clientId').value = CFG.client_id || '';
+  $('#outputRoot').value = CFG.output_root || '';
+  $('#cbUrl').textContent = CFG.callback_url || '';
+  setAuth(CFG.authenticated);
+}
+function setAuth(on){
+  const b = $('#authBadge');
+  b.className = 'badge ' + (on?'on':'off');
+  b.textContent = on ? '已登入' : '未登入';
+  $('#loginBtn').classList.toggle('hide', on);
+  $('#logoutBtn').classList.toggle('hide', !on);
+  $('#downloadBtn').disabled = !on;
+}
+$('#saveCfg').onclick = async () => {
+  $('#cfgMsg').textContent = '儲存中…';
+  await api('/api/config', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({client_id:$('#clientId').value, client_secret:$('#clientSecret').value,
+                          output_root:$('#outputRoot').value})});
+  $('#clientSecret').value = '';
+  $('#cfgMsg').textContent = '已儲存 ✓';
+  setTimeout(()=>$('#cfgMsg').textContent='', 2000);
+  loadConfig();
+};
+$('#loginBtn').onclick = () => { window.location = '/api/auth/login'; };
+$('#logoutBtn').onclick = async () => {
+  await api('/api/auth/logout', {method:'POST'});
+  setAuth(false); $('#tree').innerHTML = '<div class="muted small">已登出。</div>';
+};
+
+// ---------- 樹狀瀏覽 ----------
+const treeEl = $('#tree');
+const selected = new Map(); // key -> target node meta
+
+function renderRow(node){
+  const wrap = document.createElement('div'); wrap.className = 'node';
+  const line = document.createElement('div');
+  const twist = document.createElement('span'); twist.className = 'twist';
+  twist.textContent = node.leaf ? '' : '▸';
+  const cb = document.createElement('input'); cb.type='checkbox';
+  cb.checked = selected.has(node.key);
+  cb.onchange = () => toggleSelect(node, cb.checked);
+  const lbl = document.createElement('span'); lbl.className='label';
+  lbl.appendChild(document.createTextNode(node.name + ' '));
+  const k = document.createElement('span'); k.className='kind'; k.textContent='['+node.type+']';
+  lbl.appendChild(k);
+  line.appendChild(twist); line.appendChild(cb); line.appendChild(lbl);
+  wrap.appendChild(line);
+  const kids = document.createElement('div'); kids.className='children hide';
+  wrap.appendChild(kids);
+  node.kidsEl = kids; node.loaded = false;
+  if(!node.leaf){
+    twist.style.cursor='pointer';
+    twist.onclick = async () => {
+      kids.classList.toggle('hide');
+      twist.textContent = kids.classList.contains('hide') ? '▸' : '▾';
+      if(!node.loaded){ node.loaded=true; await loadChildren(node, kids); }
+    };
+  }
+  return wrap;
+}
+
+async function loadChildren(node, kids){
+  kids.innerHTML = '<div class="muted small">載入中…</div>';
+  try{
+    if(node.type==='hub'){
+      const {projects} = await api('/api/projects?hub_id='+encodeURIComponent(node.id));
+      kids.innerHTML='';
+      projects.forEach(p => kids.appendChild(renderRow({
+        key:'p:'+p.id, type:'project', name:p.name, id:p.id,
+        hub_id:node.id, project_id:p.id, rel_path:safeName(p.name), leaf:false })));
+    } else if(node.type==='project' || node.type==='folder'){
+      const q = new URLSearchParams({project_id:node.project_id});
+      if(node.hub_id) q.set('hub_id', node.hub_id);
+      if(node.folder_id) q.set('folder_id', node.folder_id);
+      const data = await api('/api/contents?'+q.toString());
+      kids.innerHTML='';
+      data.folders.forEach(f => kids.appendChild(renderRow({
+        key:'f:'+f.id, type:'folder', name:f.name, id:f.id, hub_id:node.hub_id,
+        project_id:node.project_id, folder_id:f.id,
+        rel_path:node.rel_path+'/'+safeName(f.name), leaf:false })));
+      data.items.forEach(it => kids.appendChild(renderRow({
+        key:'i:'+it.id, type:'item', name:it.name, id:it.id, hub_id:node.hub_id,
+        project_id:node.project_id, version_id:it.version_id,
+        rel_path:node.rel_path, leaf:true })));
+      if(!data.folders.length && !data.items.length)
+        kids.innerHTML='<div class="muted small">（空）</div>';
+    }
+  }catch(e){ kids.innerHTML='<div class="err small">載入失敗：'+e.message+'</div>'; }
+}
+
+function toggleSelect(node, on){
+  if(on) selected.set(node.key, node); else selected.delete(node.key);
+  $('#selCount').textContent = '已選 ' + selected.size;
+}
+
+$('#refreshTree').onclick = async () => {
+  selected.clear(); $('#selCount').textContent='已選 0';
+  treeEl.innerHTML = '<div class="muted small">載入中…</div>';
+  try{
+    const {hubs} = await api('/api/hubs');
+    treeEl.innerHTML='';
+    if(!hubs.length){ treeEl.innerHTML='<div class="err small">APS 列不出任何 hub（個人 hub 可能不開放）。</div>'; return; }
+    hubs.forEach(h => treeEl.appendChild(renderRow({
+      key:'h:'+h.id, type:'hub', name:h.name, id:h.id, leaf:false })));
+  }catch(e){
+    if(e.status===401){ treeEl.innerHTML='<div class="err small">尚未登入，請先點右上角「登入」。</div>'; }
+    else treeEl.innerHTML='<div class="err small">載入失敗：'+e.message+'</div>';
+  }
+};
+
+$('#clearSel').onclick = () => {
+  selected.clear(); $('#selCount').textContent='已選 0';
+  treeEl.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=false);
+};
+$('#selectAll').onclick = async () => {
+  // 展開每個 hub 抓 projects 並全選
+  selected.clear();
+  const {hubs} = await api('/api/hubs');
+  for(const h of hubs){
+    const {projects} = await api('/api/projects?hub_id='+encodeURIComponent(h.id));
+    projects.forEach(p => selected.set('p:'+p.id, {type:'project', name:p.name,
+      hub_id:h.id, project_id:p.id, rel_path:safeName(p.name)}));
+  }
+  $('#selCount').textContent = '已選 ' + selected.size;
+  $('#runMsg').textContent = '已選取全部 '+selected.size+' 個 project（直接按下載即可）';
+};
+
+// ---------- 下載 / 進度 ----------
+function buildTargets(list){
+  return list.map(n => {
+    if(n.type==='item') return {type:'item', project_id:n.project_id, version_id:n.version_id,
+                                name:n.name, rel_path:n.rel_path};
+    if(n.type==='folder') return {type:'folder', hub_id:n.hub_id, project_id:n.project_id,
+                                  folder_id:n.folder_id, rel_path:n.rel_path};
+    return {type:'project', hub_id:n.hub_id, project_id:n.project_id, name:n.name};
+  });
+}
+
+$('#downloadBtn').onclick = async () => {
+  if(!selected.size){ $('#runMsg').textContent='請先勾選項目'; return; }
+  await startDownload(buildTargets([...selected.values()]));
+};
+
+async function startDownload(targets){
+  $('#runMsg').textContent='';
+  try{
+    await api('/api/download', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({targets, output_root:$('#outputRoot').value})});
+    $('#downloadBtn').disabled = true; $('#cancelBtn').classList.remove('hide');
+    startPolling();
+  }catch(e){ $('#runMsg').innerHTML='<span class="err">'+e.message+'</span>'; }
+}
+
+$('#cancelBtn').onclick = () => api('/api/cancel', {method:'POST'});
+
+function startPolling(){ if(pollTimer) clearInterval(pollTimer); poll(); pollTimer=setInterval(poll, 1000); }
+
+const phaseTxt = {idle:'閒置', expanding:'展開項目中…', downloading:'下載中…', done:'完成', cancelled:'已取消'};
+async function poll(){
+  let p; try{ p = await api('/api/progress'); }catch(e){ return; }
+  $('#phase').textContent = phaseTxt[p.phase] || p.phase;
+  const total = p.total||0, done = p.done||0;
+  $('#bar').max = Math.max(total,1); $('#bar').value = done;
+  $('#counts').textContent = total ? (done+' / '+total) : '';
+  $('#current').textContent = p.running ? (p.current||'') : '';
+  lastResults = p.results; renderResults();
+  if(!p.running){
+    clearInterval(pollTimer); pollTimer=null;
+    $('#downloadBtn').disabled = !CFG.authenticated;
+    $('#cancelBtn').classList.add('hide');
+    const r=p.results;
+    $('#runMsg').textContent = '完成：成功 '+r.exported.length+'、已存在 '+r.skipped.length
+        +'、無原生 '+r.no_native.length+'、失敗 '+r.failed.length;
+    $('#retryBtn').disabled = r.failed.length===0;
+  }
+}
+
+// ---------- 結果 ----------
+$('#tabs').addEventListener('click', e => {
+  const t = e.target.closest('.tab'); if(!t) return;
+  currentTab = t.dataset.k;
+  [...$('#tabs').children].forEach(x=>x.classList.toggle('active', x===t));
+  renderResults();
+});
+function renderResults(){
+  const r = lastResults;
+  const tabs = $('#tabs').children;
+  const map = {exported:0, skipped:1, no_native:2, failed:3};
+  for(const k in map) tabs[map[k]].querySelector('.c').textContent='('+r[k].length+')';
+  const list = r[currentTab] || [];
+  const box = $('#results');
+  if(!list.length){ box.innerHTML='<div class="muted small">（無）</div>'; return; }
+  box.innerHTML='';
+  list.forEach(e=>{
+    const row=document.createElement('div'); row.className='res-item';
+    const dot=document.createElement('span'); dot.className='dot '+currentTab; row.appendChild(dot);
+    const main=document.createElement('div');
+    main.innerHTML = '<div>'+(e.name||'')+(e.file_type?' <span class="muted">.'+e.file_type+'</span>':'')+'</div>'
+      + '<div class="path small">'+(e.rel_path||'')
+      + (e.error?' — <span class="err">'+e.error+'</span>':'')
+      + (e.formats&&e.formats.length?' — 可用: '+e.formats.join(','):'')+'</div>';
+    row.appendChild(main); box.appendChild(row);
+  });
+}
+$('#retryBtn').onclick = async () => {
+  const failed = lastResults.failed.filter(e=>e.version_id);
+  if(!failed.length){ $('#retryMsg').textContent='沒有可重抓的失敗項'; return; }
+  $('#retryMsg').textContent='重抓 '+failed.length+' 個…';
+  const targets = failed.map(e=>({type:'item', project_id:e.project_id, version_id:e.version_id,
+                                  name:e.name, rel_path:e.rel_path}));
+  await startDownload(targets);
+};
+
+// ---------- 啟動 ----------
+loadConfig().then(()=>{ if(CFG.authenticated) $('#refreshTree').click(); });
+</script>
+</body>
+</html>

@@ -202,6 +202,17 @@ def get_token():
     return _interactive_login()['access_token']
 
 
+# 取得 token 的方式可被替換：CLI 用 get_token（會在無 token 時開瀏覽器登入）；
+# Web UI 會改成「只刷新、不開瀏覽器」的版本，避免在 callback 連接埠上撞到 Flask。
+_token_provider = get_token
+
+
+def set_token_provider(fn):
+    """讓 Web 後端注入自己的 token 取得函式。"""
+    global _token_provider
+    _token_provider = fn
+
+
 # ======================= REST helper =======================
 
 _session = requests.Session()
@@ -215,7 +226,7 @@ def api_get(path, token, params=None, full_url=None, accept_jsonapi=False):
     for attempt in range(MAX_RETRIES):
         r = _session.get(url, headers=headers, params=params)
         if r.status_code == 401:
-            token = get_token()
+            token = _token_provider()
             headers['Authorization'] = 'Bearer ' + token
             continue
         if r.status_code in (429, 500, 502, 503, 504):
@@ -235,7 +246,7 @@ def api_post(path, token, body):
     for attempt in range(MAX_RETRIES):
         r = _session.post(url, headers=headers, data=json.dumps(body))
         if r.status_code == 401:
-            token = get_token()
+            token = _token_provider()
             headers['Authorization'] = 'Bearer ' + token
             continue
         if r.status_code in (429, 500, 502, 503, 504):
