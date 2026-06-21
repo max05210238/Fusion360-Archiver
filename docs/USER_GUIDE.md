@@ -118,8 +118,10 @@ Back in the browser tab with Fusion360 Archiver:
 2. Your browser goes to Autodesk; log in and click **Allow / Authorize**.
 3. You're sent back to the tool, and the badge top-right now reads **Signed in**.
 
-This grants **read-only** access (`data:read`). The tool can list and download your files; it
-**cannot delete or change** anything in the cloud.
+The authorize screen will ask to **view your data** and **manage your data** — this is normal. The
+tool requests `data:read data:create account:read`: it reads/lists your files, and `data:create` is
+**required by Autodesk's download API just to generate the downloadable archive**. The tool only
+reads, lists, and downloads — it **never edits, overwrites, or deletes** anything in your account.
 
 ### B4. Load and choose what to download
 1. Click **Load / Refresh** under "2. Choose what to download". Your hubs and projects appear.
@@ -220,8 +222,10 @@ Usually a transient network issue. Click **↻ Retry all failed**.
 ---
 
 ## What this tool does and doesn't do (safety)
-- **Read-only**: it requests only Autodesk's `data:read` permission. It downloads; it cannot
-  delete or modify anything in your Autodesk cloud.
+- **Download-only behavior**: it requests `data:read data:create account:read`. The `data:create`
+  scope is required by Autodesk's download API only to generate the downloadable archive. The tool
+  reads, lists, and downloads; it **never edits, overwrites, or deletes** anything in your Autodesk
+  cloud (it never requests `data:write` or any delete permission).
 - **Local only**: the app runs on your own machine; nothing is uploaded anywhere except the
   normal login to Autodesk.
 - **No background service**: it runs only while the Terminal window is open. Closing it stops everything.

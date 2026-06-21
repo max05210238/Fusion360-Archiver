@@ -61,7 +61,14 @@ CLIENT_SECRET = os.environ.get('APS_CLIENT_SECRET', '')
 CALLBACK_URL  = os.environ.get('APS_CALLBACK_URL', 'http://localhost:8080/api/auth/callback')
 OUTPUT_ROOT   = os.path.expanduser(os.environ.get('APS_OUTPUT_ROOT', '~/Desktop/Fusion_Backup_APS'))
 
-SCOPES   = 'data:read account:read'
+# Scopes:
+#   data:read    - list hubs/projects/folders/items and read versions (browse + plan downloads)
+#   data:create  - REQUIRED by Autodesk's Downloads API (POST .../downloads) just to generate the
+#                  downloadable native archive. It does NOT let this tool modify or delete your
+#                  existing designs (that would need data:write / delete scopes, which we never request),
+#                  and the code only ever creates a transient download job -- nothing else.
+#   account:read - read-only listing of related accounts.
+SCOPES   = 'data:read data:create account:read'
 BASE     = 'https://developer.api.autodesk.com'
 TOKEN_CACHE = os.path.expanduser('~/.aps_archiver_token.json')
 

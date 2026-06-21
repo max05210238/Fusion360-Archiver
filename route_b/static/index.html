@@ -157,12 +157,14 @@
         <b>Data Panel ▸ Upload</b> and choose the file; it loads back as a fully editable design.
       </div>
       <div class="note" style="padding:10px; background:#10141c; border:1px solid var(--line); border-radius:8px;">
-        <b style="color:var(--txt)">About your keys:</b> the Client ID/Secret and login token are
-        stored only on this computer (your home folder, never uploaded, never shared). Treat the
-        <b>Client Secret like a password</b> — don't post or screenshot it. If it leaked, someone
-        could access your Autodesk data. <b>When you're done backing up</b>, click below to delete
-        the saved keys + token; for full safety also <b>delete the app</b> at
-        <a href="https://aps.autodesk.com/myapps" target="_blank">aps.autodesk.com/myapps ↗</a>
+        <b style="color:var(--txt)">About your keys &amp; permissions:</b> the Client ID/Secret and
+        login token are stored only on this computer (your home folder, never uploaded, never shared).
+        The tool requests <code>data:read data:create account:read</code> — it reads/lists your files
+        and uses <code>data:create</code> only because Autodesk's download API requires it to build the
+        archive; it <b>never edits, overwrites, or deletes</b> your designs. Treat the
+        <b>Client Secret like a password</b> — don't post or screenshot it. <b>When you're done backing
+        up</b>, click below to delete the saved keys + token; for full safety also <b>delete the app</b>
+        at <a href="https://aps.autodesk.com/myapps" target="_blank">aps.autodesk.com/myapps ↗</a>
         (that permanently revokes the keys).
       </div>
       <div class="row">

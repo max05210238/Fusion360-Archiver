@@ -186,9 +186,10 @@ Then open <http://localhost:8080> and follow the four on-screen steps:
 4. **3. Run**: click "Download selected" and watch live progress.
 5. **4. Results**: four buckets — Exported / Already exists / No native format / Failed; if anything failed, click **"↻ Retry all failed"** to refetch (already-downloaded files are skipped).
 
-> The UI and the CLI below share the same download logic and read-only scope; download
-> only, never delete or modify anything. The first time, it's still recommended to run
-> the CLI `--spike` to confirm the personal hub is readable (see below).
+> The UI and the CLI below share the same download logic and the same permissions (see
+> "Data security" below): the tool only reads, lists, and triggers downloads — it never
+> deletes or overwrites your designs. The first time, it's still recommended to run the
+> CLI `--spike` to confirm the personal hub is readable (see below).
 
 ---
 
@@ -293,13 +294,12 @@ have to upload them one by one.
   zipped the entire backup folder into one `.zip`, Fusion would **not** accept it as a restore — it
   isn't an `.f3z`, just a generic zip. So bundling everything into one file wouldn't make restore
   easier; it would only mislead. The per-design `.f3d`/`.f3z` files are the right, ready-to-upload unit.
-- **No built-in upload/restore UI here, on purpose.** Uploading via the API would require **write
-  access** to your Autodesk account (`data:write` / `data:create`) — this tool is deliberately
-  **read-only** so it can never alter or damage your cloud data. The official **Data Panel ▸ Upload**
-  is the reliable, supported way to restore, and it's just a file picker. Keeping restore manual is
-  the safer choice.
+- **No built-in upload/restore UI here, on purpose.** A real restore-into-Fusion would require the
+  tool to **create/modify designs in your account** and request broader write permissions; this tool
+  never does that. The official **Data Panel ▸ Upload** is the reliable, supported way to restore, and
+  it's just a file picker. Keeping restore manual is the safer choice.
 
-## Data security: your API keys
+## Data security: your API keys and permissions
 
 This tool downloads using **your own Autodesk authorization** (3-legged OAuth). Three things are
 created and live **only on your computer**, in your home folder, never uploaded or committed:
@@ -308,12 +308,21 @@ created and live **only on your computer**, in your home folder, never uploaded 
 |---|---|---|
 | Client ID | Your APS app's public identifier | low |
 | Client Secret | Your APS app's **password** | **high — treat like a password** |
-| `~/.aps_archiver_token.json` | Login token granting **read** access to your Autodesk data | high while valid |
+| `~/.aps_archiver_token.json` | Login token for your Autodesk data (scopes below) | high while valid |
+
+**What permissions (scopes) the tool requests:** `data:read data:create account:read`.
+- `data:read` / `account:read` — list and read your hubs, projects, folders and designs.
+- `data:create` — **required by Autodesk's official Downloads API** (`POST .../downloads`) just to
+  generate the downloadable native archive. It is *not* used to change your designs.
+- The tool **never** requests `data:write` or any delete scope, and its code only ever **reads, lists,
+  and triggers downloads** — it never edits, moves, overwrites, or deletes anything in your account.
+  So it **cannot delete or overwrite your existing designs.**
 
 **Leak risk:** if your Client Secret or token file is exposed (e.g. shared, screenshotted, or copied
-off your machine), someone could read/download your Fusion data. The scope is **read-only**, so they
-could not delete or modify your cloud data — but it's still your data. So: **never post or screenshot
-the Client Secret.**
+off your machine), someone could read/download your Fusion data (and, with `data:create`, create new
+items) until you revoke it. They could **not** delete or overwrite your existing designs. Still, it's
+your data — so **never post or screenshot the Client Secret**, and delete the keys when you're done
+(below).
 
 ### How to get the keys
 See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) §B1, or in short: <https://aps.autodesk.com/myapps> ▸
