@@ -276,11 +276,28 @@ backup/restore — so this backup is fully reversible:
 - **`.f3d`** — a single design.
 - **`.f3z`** — an assembly, **including all its linked components** (it's a zip of the f3d files).
 
-To restore, in Fusion open the **Data Panel ▸ Upload** and choose the `.f3d` / `.f3z` file. Fusion
-extracts it and loads it back as a **fully editable design** (for an f3z, the main assembly and all
+To restore, in Fusion open the **Data Panel ▸ Upload** and choose the `.f3d` / `.f3z` file(s). Fusion
+extracts each and loads it back as a **fully editable design** (for an f3z, the main assembly and all
 its linked parts reappear). Official docs:
 - How to make / use a local archive (backup) file:
   https://www.autodesk.com/support/technical/article/caas/sfdcarticles/sfdcarticles/How-to-make-a-local-archive-back-up-file-in-Fusion-360.html
+
+**Tip:** Fusion's Upload dialog lets you **select many `.f3d` / `.f3z` files at once**, so you don't
+have to upload them one by one.
+
+### Why there isn't a single "restore everything" file, or a built-in Upload button
+- **The restorable unit is one design.** Fusion's archive formats are per-design: a `.f3d` (one
+  design) or a `.f3z` (one assembly + its links). Each `.f3z` we download is **already** a zip that
+  Fusion accepts directly — that's the format you re-upload.
+- **There is no whole-account / whole-folder archive that Fusion restores in one click.** If you
+  zipped the entire backup folder into one `.zip`, Fusion would **not** accept it as a restore — it
+  isn't an `.f3z`, just a generic zip. So bundling everything into one file wouldn't make restore
+  easier; it would only mislead. The per-design `.f3d`/`.f3z` files are the right, ready-to-upload unit.
+- **No built-in upload/restore UI here, on purpose.** Uploading via the API would require **write
+  access** to your Autodesk account (`data:write` / `data:create`) — this tool is deliberately
+  **read-only** so it can never alter or damage your cloud data. The official **Data Panel ▸ Upload**
+  is the reliable, supported way to restore, and it's just a file picker. Keeping restore manual is
+  the safer choice.
 
 ## Data security: your API keys
 

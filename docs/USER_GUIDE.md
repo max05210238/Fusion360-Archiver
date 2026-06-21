@@ -161,8 +161,12 @@ These are Autodesk's official native archive formats, made for exactly this:
 - Click **Upload**, choose your `.f3d` or `.f3z` file, and confirm.
 - Fusion processes it and the design appears in your project as a **fully editable** model. For a
   `.f3z` assembly, the main assembly and all its linked parts are restored together.
+- **You can select multiple `.f3d` / `.f3z` files at once** in the Upload dialog, so restoring many
+  designs isn't one-at-a-time.
 
-So your backup is fully reversible — you can always get your designs back into Fusion.
+So your backup is fully reversible — you can always get your designs back into Fusion. (Note: there's
+no single "restore my whole account" file — Fusion restores per design — but each `.f3z`/`.f3d` is
+already in the exact format Fusion's Upload accepts.)
 
 ### B9. Delete your keys when you're done (recommended)
 For safety, clean up after a backup session:
