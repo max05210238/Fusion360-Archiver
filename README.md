@@ -41,7 +41,11 @@ scripting problem. So the work is split:
 > - Each later time, just double-click the launcher; to stop, close the black window.
 
 Once the interface opens, follow the four on-screen steps (Settings → Sign in →
-Select → Download), described in the next section.
+Select → Download).
+
+> **📖 New to this? Read the [step-by-step User Guide](docs/USER_GUIDE.md)** — it walks
+> through every screen and every macOS permission prompt, plus how to create the Autodesk
+> APS app. Highly recommended for first-time setup.
 
 ---
 
@@ -160,5 +164,6 @@ route_b/aps_archiver.py              Route B core: APS OAuth + traversal + Downl
 route_b/app.py                       Route B Web UI backend (Flask, wraps the core)
 route_b/static/index.html            Web UI frontend (sign in / select / run / results / retry)
 route_b/requirements.txt
+docs/USER_GUIDE.md                   step-by-step walkthrough for non-coders (start here)
 docs/Fusion_Native_Backup_BRIEF.md   original task brief (background and verified constraints)
 ```
