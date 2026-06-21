@@ -196,12 +196,20 @@ Then open <http://localhost:8080> and follow the four on-screen steps:
 ## Route B (CLI) — fully automatic via APS
 
 ### 1. Create an APS App
-1. Sign in at <https://aps.autodesk.com> and create an App.
-2. Note its **Client ID** and **Client Secret**.
-3. Set the App's **Callback URL** to match the script (default):
+> First time on APS? The full click-by-click flow (accept terms → get the **free** APS plan → create
+> an **APS Developer Hub** → create the app → fix the callback URL) is in
+> [docs/USER_GUIDE.md §B1](docs/USER_GUIDE.md). Short version:
+
+1. Sign in at <https://aps.autodesk.com/myapps>. First-time users must accept the ToS, sign up for the
+   **Free** APS plan (a card is required to verify identity but you are **not** charged), and create an
+   **APS Developer Hub**.
+2. In that hub, **Create application** → type **Traditional Web App** → note its **Client ID** and
+   **Client Secret**.
+3. Set the App's **Callback URL** to exactly (the default created value is incomplete, fix it):
    ```
    http://localhost:8080/api/auth/callback
    ```
+4. Ensure **Data Management API** is in the app's API Access list.
 
 ### 2. Install and configure
 ```bash

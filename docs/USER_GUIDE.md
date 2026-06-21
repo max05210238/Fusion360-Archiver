@@ -86,21 +86,58 @@ running. (To stop the app later, just close that window.)
 ## Part B — Set up Autodesk access and download
 
 ### B1. Create an Autodesk APS app (one time)
-To let the tool read your files, you register a free "app" with Autodesk and get two keys.
+To let the tool access your files, you register a free Autodesk "app" and get two keys (a Client ID
+and a Client Secret). It's free, but Autodesk's onboarding has a few one-time steps. Take it slow —
+this is the longest part, ~10 minutes the first time.
 
-1. Go to <https://aps.autodesk.com> and **sign in** with the same Autodesk account you use for Fusion.
-2. Click your profile (top right) ▸ **Applications** (or go directly to
-   <https://aps.autodesk.com/myapps>).
-3. Click **Create application**.
-4. When asked which APIs the app uses, enable **Data Management API**.
-5. Give it any **name** (e.g. "My Fusion Backup").
-6. Set the **Callback URL** to exactly (copy it from the tool's Settings panel — it's shown there):
-   ```
-   http://localhost:8080/api/auth/callback
-   ```
-   ⚠️ It must match character-for-character, or sign-in will fail.
-7. Click **Create**. You'll now see a **Client ID** and a **Client Secret**. Keep this page open
-   (you'll copy both in the next step).
+Go to <https://aps.autodesk.com/myapps> and **sign in** with the **same Autodesk account you use for
+Fusion**. Then work through whatever Autodesk shows you:
+
+**B1a. First-time "Welcome aboard" form (only on your very first visit).**
+Autodesk asks you to accept Terms of Service and fill basic info. Required fields: Role, Company,
+Company website, Industry (pick at least one), Country, "For what purpose are you using APS?", and the
+**Terms of Service** checkbox. State/City/ZIP are optional. The values don't matter and aren't
+verified (e.g. Role = "Hobbyist", Company = "Personal", website = `example.com`). Check the ToS box and
+**Submit**.
+
+**B1b. "You don't have a hub yet" → get the free APS plan.**
+APS now requires a "developer hub", which requires an APS plan first. On the right side under **Get an
+APS plan**, click **View options**, then on the plans page choose **Free** ▸ **Add to Cart** ▸
+checkout. Notes:
+- The **Free** plan is genuinely free (about 300,000 API calls/month; a full backup uses only a few
+  thousand, so you'll never be charged).
+- ⚠️ Checkout **requires a payment method (a card) to verify your identity**, but the total is **$0.00
+  and you are not charged** unless you ever manually upgrade. The Free plan auto-renews at $0 (you can
+  turn that off later in your Autodesk account). If you're not willing to put a card on file, you
+  can't use Route B — use Route A instead (see the main README).
+- Don't pick Prepay or Pay-as-You-Go (those are paid).
+
+**B1c. Create the developer hub.**
+After the plan is active, in your Autodesk account go to **Products and Services ▸ Hubs**. You may
+already see a hub named like "Team hub – <you>" with product **Fusion** — that is your *data* hub, NOT
+a developer hub, so you still need to make one. Click **Create hub ▸ APS Developer Hub**, give it a
+name (e.g. `Fusion Backup Hub`), and **Create and activate**. Wait a moment for it to finish
+activating.
+
+**B1d. Create the application.**
+Go to <https://aps.autodesk.com/myapps>; make sure the **Developer Hub** selector (top left) shows your
+new hub. Click **Create application**:
+- **Name**: anything (e.g. `Fusion Backup`).
+- **Application Type**: choose **Traditional Web App** (the "Most flexible" one — it stores a secret
+  and uses the Authorization Code login this tool needs). Click **Create**.
+
+**B1e. Finish the app settings (this is where people get stuck).**
+On the app's **App settings** page:
+- ⚠️ **Callback URL**: it may default to just `http://localhost:8080/`. **Change it to exactly**
+  (copy from the tool's Settings panel):
+  ```
+  http://localhost:8080/api/auth/callback
+  ```
+  Character-for-character, or sign-in fails. Then **Save changes**.
+- **API Access**: make sure **Data Management API** is checked (it's the only one this tool needs;
+  you may untick the rest for least privilege, or leave them — it doesn't increase risk).
+- Copy your **Client ID** (copy icon) and reveal + copy your **Client Secret** (eye icon, then copy).
+  Keep them handy for the next step.
 
 ### B2. Fill in Settings (in the tool)
 Back in the browser tab with Fusion360 Archiver:
