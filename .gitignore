@@ -1,6 +1,11 @@
+# Local-only files — never commit these.
+
+# Python caches and virtual environments
 __pycache__/
 *.pyc
 .venv/
 route_b/.venv/
+
+# Your APS credentials and OAuth token — these stay on your machine only.
 .aps_archiver_token.json
 .aps_archiver_config.json
