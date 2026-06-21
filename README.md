@@ -18,13 +18,29 @@ Fusion 的 `adsk.*` 內建 API **拿不到含外部參照（linked components）
 
 ---
 
-## 🖥️ 最簡單：用 Web UI 跑路線 B（推薦）
+## 🚀 最簡單：點兩下就能跑（不用懂程式、不用開 VSCode）
 
-不想碰指令的話，用內建的本機網頁介面：登入、勾選要下載的專案/資料夾、選路徑、執行、看結果、一鍵重抓漏檔，全部在瀏覽器點一點。
+1. 下載整個專案（GitHub 綠色 **Code ▸ Download ZIP**），解壓縮。
+2. **macOS**：對 **`啟動-Mac.command`** 點兩下。
+   **Windows**：對 **`啟動-Windows.bat`** 點兩下。
+3. 第一次它會自動裝好需要的東西（約 1 分鐘），然後**自動打開瀏覽器**到操作介面。
+
+> - macOS 第一次若跳「無法打開，因為來自未識別的開發者」：對該檔**按右鍵 ▸ 打開 ▸ 打開**，之後就能直接點兩下。
+> - 若提示沒有 Python，它會自動打開下載頁；裝好後再點兩下啟動檔即可（macOS 記得裝 python.org 版本，Windows 安裝時勾 **Add Python to PATH**）。
+> - 之後每次要用，就點兩下啟動檔；要結束就關掉那個黑色視窗。
+
+打開介面後，照畫面四個步驟（設定 → 登入 → 勾選 → 下載）操作即可，詳見下一節。
+
+---
+
+## 🖥️ 進階：手動用指令跑 Web UI
+
+懂終端機的話也可以手動啟動（內容和雙擊啟動檔一樣）：
 
 ```bash
 cd route_b
-pip install -r requirements.txt    # 若 flask 因系統 blinker 衝突，改用 pip install --ignore-installed blinker flask
+python3 -m venv .venv && source .venv/bin/activate   # 建議用隔離環境
+pip install -r requirements.txt
 python app.py
 ```
 然後瀏覽器開 <http://localhost:8080>，依畫面四個步驟：
@@ -113,6 +129,8 @@ python aps_archiver.py --list     # 只想先看 hub/project 樹狀結構
 
 ## 檔案結構
 ```
+啟動-Mac.command                     macOS 雙擊啟動（自動裝環境 + 開介面）
+啟動-Windows.bat                     Windows 雙擊啟動
 route_a/Fusion_Batch_Export_All.py   路線 A：Fusion 內批次匯出 f3d + 生成待手動清單
 route_b/aps_archiver.py              路線 B 核心：APS OAuth + 遍歷 + Downloads API 下載（CLI 可獨立用）
 route_b/app.py                       路線 B Web UI 後端（Flask，包住上面的核心邏輯）

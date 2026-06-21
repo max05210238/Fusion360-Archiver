@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
+.venv/
+route_b/.venv/
 .aps_archiver_token.json
 .aps_archiver_config.json

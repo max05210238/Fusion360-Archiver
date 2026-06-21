@@ -384,6 +384,12 @@ def api_cancel():
 
 
 if __name__ == '__main__':
-    print('APS Archiver UI 啟動：http://localhost:{}'.format(PORT))
+    url = 'http://localhost:{}'.format(PORT)
+    print('APS Archiver UI 啟動：' + url)
     print('（OAuth callback 已設為 {}）'.format(aps.CALLBACK_URL))
+    print('瀏覽器會自動打開；若沒有，手動開上面的網址。結束請關閉視窗或按 Ctrl+C。')
+    # 啟動後自動打開瀏覽器（可用 APS_NO_BROWSER=1 關閉）
+    if os.environ.get('APS_NO_BROWSER') != '1':
+        import webbrowser
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
     app.run(host='127.0.0.1', port=PORT, threaded=True)
