@@ -12,6 +12,28 @@ There are two big phases:
 
 ## Part A — Get the app running
 
+### A0. Install Python first (only if you don't have it)
+This tool needs **Python 3** (a free, safe, widely-used program). You only install it once. The
+launcher will tell you if it's missing — but you can just do this first to be safe.
+
+**macOS**
+1. Go to <https://www.python.org/downloads/macos/>.
+2. Click the big yellow **Download Python 3.x** button — it downloads a file ending in `.pkg`.
+3. Open the downloaded `.pkg` from your Downloads folder.
+4. Click **Continue → Continue → Agree → Install**, enter your Mac password when asked, then **Close**.
+5. Done. (You don't need to open Python yourself — the launcher uses it.)
+
+**Windows**
+1. Go to <https://www.python.org/downloads/windows/>.
+2. Click **Download Python 3.x** (the installer is a `.exe`).
+3. Run the installer. **IMPORTANT:** on the first screen, check the box **"Add python.exe to PATH"**
+   at the bottom.
+4. Click **Install Now**, allow it, then **Close**.
+5. Done.
+
+> Not sure if you already have it? Just try the launcher (next steps). If it pops up "Python not
+> found", come back and install it as above.
+
 ### A1. Download the project
 1. On the project's GitHub page, click the green **Code** button ▸ **Download ZIP**.
 2. Find the ZIP in your **Downloads** folder and double-click to unzip it.

@@ -85,6 +85,41 @@ Two routes, so you're never stuck:
 
 ---
 
+## ⚠️ Project status, support & disclaimer — please read
+
+- **This is a personal backup tool, provided AS-IS, with NO warranty and NO support.**
+- The repository owner **is not a developer**. They described a problem; **the code was written
+  entirely by an AI assistant (Claude)** based on that description. The owner cannot debug,
+  maintain, or guarantee this code.
+- **If you find a bug, you are expected to fix it yourself** (fork the repo and modify it). Please
+  **do not expect the owner to triage, answer, or fix issues** — they very likely can't.
+- **Route B (APS)** is the part that was actually exercised. **Route A (the in-Fusion script) is
+  UNTESTED by the owner** — it's included only as a convenience for people who want it. Treat it as
+  experimental and verify it yourself before relying on it.
+- **Verify your backup.** Before trusting it, restore at least one file back into Fusion (see
+  "Restoring your backup into Fusion") to confirm the workflow works for your account.
+- You use this tool, and your own Autodesk APS app/keys, **at your own risk.**
+
+---
+
+## Folder structure: it mirrors what you see in Fusion
+
+The local output rebuilds the same hierarchy you see in Fusion's Data Panel:
+
+```
+<download path>/
+  <Project name>/            # one top-level folder per project
+    <Folder name>/           # same folder names as in Fusion
+      <Design name>.f3d      # single-body design
+      <Assembly name>.f3z    # assembly (with all linked parts inside)
+```
+
+Project, folder, and file names are **the same as in Fusion**, with one caveat: characters that are
+illegal in filenames (`/ \ : * ? " < > |`) are replaced with `_`, so e.g. a design called
+`Bracket v2 (final)` stays as-is, but `Left/Right Mount` becomes `Left_Right Mount`.
+
+---
+
 ## Why two routes (quick summary)
 
 As explained above, no single in-Fusion script can get every native file, so the work is split:
@@ -115,9 +150,11 @@ As explained above, no single in-Fusion script can get every native file, so the
 > - macOS, first time, if it says "cannot be opened because it is from an
 >   unidentified developer": **right-click the file ▸ Open ▸ Open**; after that you
 >   can just double-click it.
-> - If it reports Python is missing, it opens the download page automatically; install
->   it and double-click the launcher again (on macOS install the python.org build; on
->   Windows check **Add Python to PATH** during install).
+> - **Don't have Python?** It's a free one-time install. Step-by-step (with screenshots-level
+>   detail) is in [docs/USER_GUIDE.md §A0](docs/USER_GUIDE.md#a0-install-python-first-only-if-you-dont-have-it).
+>   Short version: macOS → <https://www.python.org/downloads/macos/> (open the `.pkg`, click through);
+>   Windows → <https://www.python.org/downloads/windows/> (run it, **check "Add python.exe to PATH"**).
+>   Then double-click the launcher again.
 > - Each later time, just double-click the launcher; to stop, close the black window.
 
 Once the interface opens, follow the four on-screen steps (Settings → Sign in →
@@ -200,8 +237,12 @@ Output goes to `APS_OUTPUT_ROOT`, with `export_log.txt` (exported / skipped / no
 
 ---
 
-## Route A — in-Fusion script (fallback, single-body f3d only)
+## Route A — in-Fusion script (fallback, single-body f3d only) — ⚠️ UNTESTED
 
+> **Heads-up: the owner has not tested Route A.** It's provided for people who want an in-Fusion
+> option. Treat it as experimental — read the code, and verify it on a couple of files before
+> trusting it.
+>
 > Use when the personal hub is not reachable over APS: at least pull the native f3d
 > for single-body designs, and produce a manual-download list for the assemblies.
 
