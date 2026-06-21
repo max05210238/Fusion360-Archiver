@@ -3,11 +3,91 @@
 Batch-download every **native file** (`.f3d` / `.f3z`) from your Autodesk / Fusion 360
 personal account to your computer, preserving the "project / folder" structure.
 
-## Why two routes
+---
 
-Fusion's built-in `adsk.*` API **cannot export assemblies that contain external
-references (linked components) as native files** — that's an API ceiling, not a
-scripting problem. So the work is split:
+## Background: the problem, the limits, and what you get
+
+### The problem
+Everything in Fusion 360 lives in **Autodesk's cloud**. If you have a whole account's worth of
+designs — dozens of projects, folders, and one-off files, easily **100+ files** — there is no
+built-in way to pull them all down as a real, restorable backup:
+
+- **Fusion has no native UI batch export.** The official interface handles **one file at a time**.
+- To truly own your work offline you want the **native format** (`.f3d` / `.f3z`), not a neutral
+  format like STEP — because only the native format restores back into Fusion as a **fully editable
+  design with its edit history** (STEP is flattened, history-less geometry).
+
+### Why it's hard (the hard limits)
+These are verified constraints, not implementation choices:
+
+1. **No batch export in the Fusion UI** — the community relies entirely on scripts/APIs.
+2. **Fusion's built-in `adsk.*` API cannot export an assembly with external references (linked
+   components) as a native file.** For such a file Fusion only offers `.f3z`, and the API can't even
+   produce that. So an in-Fusion script can do single-body designs but is *forced to skip* assemblies.
+3. **The official way to get a native assembly with all its linked parts is to "Download" the
+   top-level file from the cloud Data Panel → which yields a `.f3z`.** That's a cloud action, not an
+   `adsk.*` API call.
+4. **Everything is a cloud fetch**, so 100+ files can take 1–3 hours and must survive single-file
+   failures without aborting the whole run.
+
+> Bottom line: **no single in-Fusion script can fully, automatically get every native file.** You
+> have to handle "single-body designs" and "assemblies" by different means.
+
+### What existing tools can and can't do — e.g. [tapnair/Project-Archiver](https://github.com/tapnair/Project-Archiver)
+This is the well-known community add-in (and the inspiration for this project). It's good, but it
+hits exactly the wall above:
+
+- **What it does:** runs inside Fusion and bulk-exports every design in a project to **STEP**
+  (plus EAGLE formats for electronics). Cross-platform, batches a whole project.
+- **What it *can't* do — and why:**
+  - **No native `.f3d` / `.f3z`** — it only outputs STEP. STEP is **neutral, flattened geometry**:
+    no edit history, no parametric features, and you **can't re-upload it as an editable native
+    design**. Fine for handing geometry to another CAD tool; **not a true restorable backup**.
+  - **No assemblies with linked components** as native — same `adsk.*` ceiling; it sidesteps the
+    problem by only ever producing STEP.
+  - It's an **in-Fusion GUI add-in**, so it can't run headless, and it must be triggered by hand.
+    (The community also reports it occasionally crashing Fusion on macOS after many files.)
+
+So Project-Archiver answers "give me the geometry as STEP," not "give me my real, editable Fusion
+files back."
+
+### Our solution
+Two routes, so you're never stuck:
+
+- **Route B (primary, fully automatic):** talk to the **APS (Autodesk Platform Services) Data
+  Management REST API** from your own machine, using the **official Downloads API**
+  (`downloadFormats → create download job → signed download`). This produces **real, re-uploadable
+  native `.f3d` / `.f3z`**, and the `.f3z` **packages all linked components** of an assembly. It runs
+  headless after a one-time browser login, and ships with a point-and-click **Web UI**.
+- **Route A (fallback, in-Fusion script):** if the APS path can't see your personal hub, an improved
+  in-Fusion script still grabs native **`.f3d` for single-body designs** and writes a
+  `manual_download_list.txt` of the assemblies for you to Download from the Data Panel.
+
+### What you get with this approach
+- **Native `.f3d` / `.f3z`**, not STEP → **fully editable** and **restorable into Fusion** (Data
+  Panel ▸ Upload), with edit history intact.
+- **Assemblies as `.f3z`** containing **all linked parts**.
+- Your **project / folder structure** rebuilt locally.
+- A **hands-off** workflow (sign in → select → download → retry failures) via a local Web UI.
+- A real, **reversible** backup — see "Restoring your backup into Fusion" below.
+
+### At a glance
+
+| | Project-Archiver | This tool — Route A | This tool — Route B |
+|---|---|---|---|
+| Output format | STEP (+ EAGLE) | native `.f3d` | native `.f3d` + `.f3z` |
+| Single-body designs | ✅ as STEP | ✅ native | ✅ native |
+| Assemblies w/ linked parts | ⚠️ STEP only (flattened) | ❌ (listed for manual) | ✅ `.f3z` with all parts |
+| Editable / restorable into Fusion | ❌ geometry only | ✅ | ✅ |
+| Edit history preserved | ❌ | ✅ | ✅ |
+| Fully automatic / headless | ❌ | ❌ | ✅ |
+| Needs the Fusion GUI | yes | yes | no (local web UI) |
+
+---
+
+## Why two routes (quick summary)
+
+As explained above, no single in-Fusion script can get every native file, so the work is split:
 
 | | Route A (in-Fusion script) | Route B (APS REST API) |
 |---|---|---|
