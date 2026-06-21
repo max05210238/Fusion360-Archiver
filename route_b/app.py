@@ -331,6 +331,21 @@ def auth_logout():
     return jsonify({'ok': True})
 
 
+@app.route('/api/wipe', methods=['POST'])
+def api_wipe():
+    """Remove the locally stored token AND the saved Client ID/Secret (full cleanup)."""
+    for p in (aps.TOKEN_CACHE, CONFIG_PATH):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
+    CONFIG['client_id'] = ''
+    CONFIG['client_secret'] = ''
+    _apply_config_to_aps()
+    return jsonify({'ok': True})
+
+
 # ============================ Routes: browse data ============================
 
 def _auth_guard():

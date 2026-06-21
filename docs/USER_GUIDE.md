@@ -133,6 +133,26 @@ Open the **Download path** folder. Files are organized as
 `Project / Folder / Design.f3d` (or `.f3z` for assemblies). Assemblies as `.f3z` contain all
 their linked parts.
 
+### B8. Restoring a file back into Fusion (so the backup is actually useful)
+These are Autodesk's official native archive formats, made for exactly this:
+- In Fusion, open the **Data Panel** (the grid icon, top left).
+- Click **Upload**, choose your `.f3d` or `.f3z` file, and confirm.
+- Fusion processes it and the design appears in your project as a **fully editable** model. For a
+  `.f3z` assembly, the main assembly and all its linked parts are restored together.
+
+So your backup is fully reversible — you can always get your designs back into Fusion.
+
+### B9. Delete your keys when you're done (recommended)
+For safety, clean up after a backup session:
+1. In the app, scroll to **"5. Security & restore"** and click **🗑 Delete my keys & sign out**.
+   This removes the saved Client ID/Secret and your login token from this computer.
+2. For full safety, also go to <https://aps.autodesk.com/myapps>, open your app, and **Delete** it.
+   That permanently revokes the keys (you can make a new app next time).
+
+Why: the **Client Secret** is like a password, and the login token grants read access to your
+Autodesk data. They live only on your computer, but never share or screenshot the Client Secret,
+and deleting them when done removes any lingering risk.
+
 ---
 
 ## Using it again later

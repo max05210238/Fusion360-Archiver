@@ -147,6 +147,51 @@ lets one failure stop the run, and is re-runnable (`SKIP_IF_EXISTS=True` skips a
 
 ---
 
+## Restoring your backup into Fusion (yes, it works)
+
+The downloaded files are Autodesk's **official native archive formats**, designed exactly for
+backup/restore — so this backup is fully reversible:
+
+- **`.f3d`** — a single design.
+- **`.f3z`** — an assembly, **including all its linked components** (it's a zip of the f3d files).
+
+To restore, in Fusion open the **Data Panel ▸ Upload** and choose the `.f3d` / `.f3z` file. Fusion
+extracts it and loads it back as a **fully editable design** (for an f3z, the main assembly and all
+its linked parts reappear). Official docs:
+- How to make / use a local archive (backup) file:
+  https://www.autodesk.com/support/technical/article/caas/sfdcarticles/sfdcarticles/How-to-make-a-local-archive-back-up-file-in-Fusion-360.html
+
+## Data security: your API keys
+
+This tool downloads using **your own Autodesk authorization** (3-legged OAuth). Three things are
+created and live **only on your computer**, in your home folder, never uploaded or committed:
+
+| Item | What it is | Sensitivity |
+|---|---|---|
+| Client ID | Your APS app's public identifier | low |
+| Client Secret | Your APS app's **password** | **high — treat like a password** |
+| `~/.aps_archiver_token.json` | Login token granting **read** access to your Autodesk data | high while valid |
+
+**Leak risk:** if your Client Secret or token file is exposed (e.g. shared, screenshotted, or copied
+off your machine), someone could read/download your Fusion data. The scope is **read-only**, so they
+could not delete or modify your cloud data — but it's still your data. So: **never post or screenshot
+the Client Secret.**
+
+### How to get the keys
+See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) §B1, or in short: <https://aps.autodesk.com/myapps> ▸
+**Create application** ▸ enable **Data Management API** ▸ set Callback URL
+`http://localhost:8080/api/auth/callback` ▸ copy the Client ID & Secret.
+
+### How to delete the keys when you're done (recommended)
+1. **In the app** (section "5. Security & restore"): click **🗑 Delete my keys & sign out** — this
+   removes the saved Client ID/Secret and the login token from your computer.
+   (Equivalent manual step: delete `~/.aps_archiver_config.json` and `~/.aps_archiver_token.json`.)
+2. **For full revocation**: go to <https://aps.autodesk.com/myapps>, open your app, and **Delete** it.
+   This permanently invalidates the Client ID/Secret so they can never be used again — even if they
+   had leaked. You can always create a fresh app next time you back up.
+
+> Doing your backup and then deleting both the local keys and the APS app is the safest pattern.
+
 ## Known pitfalls
 - **APS visibility of the personal hub**: the only real risk for Route B; always `--spike`
   first instead of building the whole thing before discovering you can't get the data.

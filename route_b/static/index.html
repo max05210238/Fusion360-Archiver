@@ -145,6 +145,29 @@
       <div id="results" class="results"><div class="muted small">No results yet.</div></div>
       <div class="note">A log is also written to <code>export_log.txt</code> in the download path. Retry automatically skips already-downloaded files.</div>
     </div>
+
+    <div class="panel">
+      <h2>5. Security &amp; restore</h2>
+      <div class="note" style="padding:10px; background:#10141c; border:1px solid var(--line); border-radius:8px; margin-top:0;">
+        <b style="color:var(--txt)">How to restore later:</b> downloaded files are
+        <code>.f3d</code> (single design) and <code>.f3z</code> (assembly + all linked parts) —
+        Autodesk's official archive formats. To restore, in Fusion open the
+        <b>Data Panel ▸ Upload</b> and choose the file; it loads back as a fully editable design.
+      </div>
+      <div class="note" style="padding:10px; background:#10141c; border:1px solid var(--line); border-radius:8px;">
+        <b style="color:var(--txt)">About your keys:</b> the Client ID/Secret and login token are
+        stored only on this computer (your home folder, never uploaded, never shared). Treat the
+        <b>Client Secret like a password</b> — don't post or screenshot it. If it leaked, someone
+        could access your Autodesk data. <b>When you're done backing up</b>, click below to delete
+        the saved keys + token; for full safety also <b>delete the app</b> at
+        <a href="https://aps.autodesk.com/myapps" target="_blank">aps.autodesk.com/myapps ↗</a>
+        (that permanently revokes the keys).
+      </div>
+      <div class="row">
+        <button id="wipeBtn" class="ghost">🗑 Delete my keys &amp; sign out</button>
+        <span id="wipeMsg" class="small muted"></span>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -201,6 +224,13 @@ $('#loginBtn').onclick = () => { window.location = '/api/auth/login'; };
 $('#logoutBtn').onclick = async () => {
   await api('/api/auth/logout', {method:'POST'});
   setAuth(false); $('#tree').innerHTML = '<div class="muted small">Signed out.</div>';
+};
+$('#wipeBtn').onclick = async () => {
+  if(!confirm('Delete the saved Client ID/Secret and login token from this computer, and sign out?\n\nYour downloaded backup files are NOT affected.')) return;
+  await api('/api/wipe', {method:'POST'});
+  $('#clientId').value=''; $('#clientSecret').value=''; setAuth(false);
+  $('#tree').innerHTML = '<div class="muted small">Keys removed and signed out.</div>';
+  $('#wipeMsg').textContent = 'Done ✓ — for full safety, also delete the app at aps.autodesk.com/myapps';
 };
 
 // ---------- Tree browsing ----------
