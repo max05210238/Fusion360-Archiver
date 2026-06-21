@@ -56,6 +56,8 @@
   .note { font-size:12px; color:var(--muted); margin-top:8px; }
   a { color:var(--accent); }
   .err { color:var(--err); }
+  .hint { font-size:11px; color:var(--accent); border:1px solid var(--accent); border-radius:999px;
+          padding:1px 8px; margin-left:8px; vertical-align:middle; font-weight:600; }
 </style>
 </head>
 <body>
@@ -63,7 +65,7 @@
   <h1>🗂️ Fusion360 Archiver</h1>
   <span id="authBadge" class="badge off">Not signed in</span>
   <div class="spacer"></div>
-  <button id="loginBtn" class="primary">Sign in to Autodesk</button>
+  <button id="loginBtn" class="primary" disabled title="First enter your APS Client ID & Secret in Step 1 and click Save settings.">Sign in (finish Step 1 first)</button>
   <button id="logoutBtn" class="ghost hide">Sign out</button>
 </header>
 
@@ -71,7 +73,7 @@
   <!-- Left column: settings + tree selection -->
   <section style="display:flex; flex-direction:column; gap:16px;">
     <div class="panel">
-      <h2>1. Settings</h2>
+      <h2>1. Settings <span id="step1hint" class="hint">Start here ↓</span></h2>
       <div class="note" style="margin:0 0 10px; padding:10px; background:#10141c; border:1px solid var(--line); border-radius:8px;">
         <b style="color:var(--txt)">First time?</b> You need two keys from Autodesk (one-time, ~2 min):
         <a href="https://aps.autodesk.com/myapps" target="_blank">open the Autodesk app page ↗</a>,
@@ -193,6 +195,7 @@ async function loadConfig(){
   $('#cbUrl').textContent = CFG.callback_url || '';
   setAuth(CFG.authenticated);
 }
+function keysReady(){ return !!(CFG.client_id && CFG.has_secret); }
 function setAuth(on){
   const b = $('#authBadge');
   b.className = 'badge ' + (on?'on':'off');
@@ -200,6 +203,15 @@ function setAuth(on){
   $('#loginBtn').classList.toggle('hide', on);
   $('#logoutBtn').classList.toggle('hide', !on);
   $('#downloadBtn').disabled = !on;
+  // Gate the sign-in button: it does nothing until the keys are saved (Step 1).
+  const lb = $('#loginBtn');
+  if(!on){
+    const ready = keysReady();
+    lb.disabled = !ready;
+    lb.textContent = ready ? 'Sign in to Autodesk' : 'Sign in (finish Step 1 first)';
+  }
+  // Show the "Start here" hint on Step 1 only until the keys are saved.
+  $('#step1hint').classList.toggle('hide', on || keysReady());
 }
 $('#saveCfg').onclick = async () => {
   $('#cfgMsg').textContent = 'Saving...';
@@ -207,9 +219,13 @@ $('#saveCfg').onclick = async () => {
     body: JSON.stringify({client_id:$('#clientId').value, client_secret:$('#clientSecret').value,
                           output_root:$('#outputRoot').value})});
   $('#clientSecret').value = '';
-  $('#cfgMsg').textContent = 'Saved ✓';
-  setTimeout(()=>$('#cfgMsg').textContent='', 2000);
-  loadConfig();
+  await loadConfig();
+  if(keysReady() && !CFG.authenticated){
+    $('#cfgMsg').innerHTML = 'Saved ✓ — now click <b>Sign in to Autodesk</b> (top right)';
+  } else {
+    $('#cfgMsg').textContent = 'Saved ✓';
+    setTimeout(()=>$('#cfgMsg').textContent='', 2000);
+  }
 };
 $('#browseBtn').onclick = async () => {
   const btn = $('#browseBtn'); const old = btn.textContent;
