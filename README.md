@@ -183,8 +183,18 @@ Then open <http://localhost:8080> and follow the four on-screen steps:
    on the page, default `http://localhost:8080/api/auth/callback`.)
 2. **"Sign in to Autodesk"** (top right): it redirects you to authorize; on return it shows "Signed in".
 3. **2. Select**: click "Load" to list hubs/projects, expand and check; checking a whole project = all designs under it. You can also "Select all projects".
-4. **3. Run**: click "Download selected" and watch live progress.
-5. **4. Results**: four buckets — Exported / Already exists / No native format / Failed; if anything failed, click **"↻ Retry all failed"** to refetch (already-downloaded files are skipped).
+4. **3. Run**: click **"Scan & Compare"** — the tool diffs the cloud against your local
+   folder (FreeFileSync-style) and lists each design as **New / Updated / Up-to-date /
+   Missing / Unverified / Orphan**, with the cloud version number and modified dates. Check
+   the rows you want and click **"Sync selected"** to download only those. (A plain
+   "Download all selected" button is still there if you'd rather skip the compare step.)
+5. **4. Results**: four buckets — Exported / Already current / No native format / Failed; if anything failed, click **"↻ Retry all failed"** to refetch.
+
+> **Re-runnable, version-aware.** After the first backup the tool records what version of
+> each design it saved (a small `.aps_manifest.json` in your download folder). On later runs
+> it re-downloads **only** designs that are new or that changed in Fusion — even when the file
+> name is unchanged — and never touches unchanged files. Designs you deleted in the cloud are
+> reported as "orphan" but your local copies are **never** deleted.
 
 > The UI and the CLI below share the same download logic and the same permissions (see
 > "Data security" below): the tool only reads, lists, and triggers downloads — it never
@@ -234,12 +244,19 @@ It runs two checks and prints the results:
 After a successful spike, **manually unzip** the `.f3z` you fetched to confirm it
 contains all linked parts (proving assemblies are packaged).
 
-### 4. Full download
+### 4. Full download / incremental sync
 ```bash
-python aps_archiver.py --all      # preserves structure, re-runnable (existing files are skipped)
+python aps_archiver.py --dry-run  # preview the plan: new / updated / up-to-date / missing / orphan
+python aps_archiver.py --sync     # version-aware sync: download only new & changed files (== --all)
+python aps_archiver.py --all      # same as --sync (kept for compatibility)
 python aps_archiver.py --list     # just inspect the hub/project tree first
 ```
-Output goes to `APS_OUTPUT_ROOT`, with `export_log.txt` (exported / skipped / no native format / failed).
+`--sync` compares the cloud against your local folder using a `.aps_manifest.json` it keeps in
+`APS_OUTPUT_ROOT`, so re-runs re-download **only** what is new or has a newer version in Fusion
+(matched by Autodesk version, not just file name) and skip everything unchanged. `--dry-run`
+prints the same comparison without downloading anything. Output goes to `APS_OUTPUT_ROOT`, with
+`export_log.txt` (synced / no native format / failed / orphan). Orphans (removed from the cloud)
+are only reported — local files are never deleted.
 
 > The first run opens a browser to sign in to Autodesk and authorize; the token is
 > cached to `~/.aps_archiver_token.json` (gitignored — do not commit it).

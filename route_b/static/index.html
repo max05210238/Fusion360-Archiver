@@ -52,6 +52,21 @@
   .dot { width:8px; height:8px; border-radius:50%; margin-top:5px; flex:none; }
   .dot.exported{background:var(--ok)} .dot.skipped{background:var(--accent)}
   .dot.no_native{background:var(--warn)} .dot.failed{background:var(--err)}
+  /* Scan & Compare table */
+  .cmp { max-height:360px; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#0f1218; }
+  table.cmp-t { width:100%; border-collapse:collapse; font-size:12px; }
+  table.cmp-t th, table.cmp-t td { padding:5px 8px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.cmp-t th { position:sticky; top:0; background:#141822; color:var(--muted); font-weight:600; z-index:1; }
+  table.cmp-t td.name { white-space:normal; }
+  table.cmp-t tr.orphan { opacity:.55; }
+  .stat { display:inline-block; font-size:11px; font-weight:600; padding:1px 8px; border-radius:999px; border:1px solid; }
+  .stat.new{color:var(--ok);border-color:var(--ok)}
+  .stat.updated{color:var(--warn);border-color:var(--warn)}
+  .stat.missing_local{color:var(--accent);border-color:var(--accent)}
+  .stat.uptodate{color:var(--muted);border-color:var(--line)}
+  .stat.unverified{color:var(--muted);border-color:var(--muted)}
+  .stat.orphan{color:var(--err);border-color:var(--err)}
+  .legend { font-size:11px; color:var(--muted); margin-top:8px; display:flex; gap:12px; flex-wrap:wrap; }
   .hide { display:none; }
   .note { font-size:12px; color:var(--muted); margin-top:8px; }
   a { color:var(--accent); }
@@ -117,10 +132,12 @@
     <div class="panel">
       <h2>3. Run</h2>
       <div class="row">
-        <button id="downloadBtn" class="primary" disabled>Download selected</button>
+        <button id="scanBtn" class="primary" disabled>Scan &amp; Compare</button>
+        <button id="downloadBtn" class="ghost" disabled title="Skips already-downloaded files (filename match).">Download all selected</button>
         <button id="cancelBtn" class="ghost hide">Cancel</button>
         <span id="runMsg" class="small muted"></span>
       </div>
+      <div class="note">Recommended: <b>Scan &amp; Compare</b> checks what changed in the cloud vs. your local folder (like FreeFileSync), then downloads only what's new or updated.</div>
       <div style="margin-top:14px;">
         <div class="row small">
           <span id="phase" class="muted">Idle</span>
@@ -130,6 +147,27 @@
         <progress id="bar" value="0" max="100"></progress>
         <div id="current" class="small muted" style="min-height:18px;"></div>
       </div>
+    </div>
+
+    <div id="comparePanel" class="panel hide">
+      <h2>Scan &amp; Compare</h2>
+      <div class="row" style="margin-bottom:8px;">
+        <button id="syncBtn" class="primary" disabled>Sync selected</button>
+        <button id="cmpAll" class="ghost">Check all downloadable</button>
+        <button id="cmpNone" class="ghost">Uncheck all</button>
+        <span class="spacer"></span>
+        <span id="cmpSummary" class="small muted"></span>
+      </div>
+      <div id="cmpBox" class="cmp"><div class="muted small" style="padding:8px;">Click "Scan &amp; Compare" above.</div></div>
+      <div class="legend">
+        <span><span class="stat new">NEW</span> not downloaded yet</span>
+        <span><span class="stat updated">UPDATED</span> changed in cloud</span>
+        <span><span class="stat missing_local">MISSING</span> gone locally</span>
+        <span><span class="stat uptodate">UP-TO-DATE</span> already current</span>
+        <span><span class="stat unverified">UNVERIFIED</span> on disk, version unknown</span>
+        <span><span class="stat orphan">ORPHAN</span> removed from cloud (kept)</span>
+      </div>
+      <div class="note">Only <b>checked</b> rows are downloaded. Orphans are never deleted — they're only listed so you know a design was removed from the cloud.</div>
     </div>
 
     <div class="panel">
@@ -205,6 +243,7 @@ function setAuth(on){
   $('#loginBtn').classList.toggle('hide', on);
   $('#logoutBtn').classList.toggle('hide', !on);
   $('#downloadBtn').disabled = !on;
+  $('#scanBtn').disabled = !on;
   // Gate the sign-in button: it does nothing until the keys are saved (Step 1).
   const lb = $('#loginBtn');
   if(!on){
@@ -305,6 +344,7 @@ async function loadChildren(node, kids){
       data.items.forEach(it => kids.appendChild(renderRow({
         key:'i:'+it.id, type:'item', name:it.name, id:it.id, hub_id:node.hub_id,
         project_id:node.project_id, version_id:it.version_id,
+        lineage_id:it.lineage_id||it.id, last_modified:it.last_modified,
         rel_path:node.rel_path, leaf:true })));
       if(!data.folders.length && !data.items.length)
         kids.innerHTML='<div class="muted small">(empty)</div>';
@@ -353,7 +393,8 @@ $('#selectAll').onclick = async () => {
 function buildTargets(list){
   return list.map(n => {
     if(n.type==='item') return {type:'item', project_id:n.project_id, version_id:n.version_id,
-                                name:n.name, rel_path:n.rel_path};
+                                name:n.name, rel_path:n.rel_path,
+                                lineage_id:n.lineage_id||n.id, last_modified:n.last_modified};
     if(n.type==='folder') return {type:'folder', hub_id:n.hub_id, project_id:n.project_id,
                                   folder_id:n.folder_id, rel_path:n.rel_path};
     return {type:'project', hub_id:n.hub_id, project_id:n.project_id, name:n.name};
@@ -377,6 +418,105 @@ async function startDownload(targets){
 
 $('#cancelBtn').onclick = () => api('/api/cancel', {method:'POST'});
 
+// ---------- Scan & Compare (FreeFileSync-style) ----------
+let lastPlan = [];
+const STAT_LABEL = {new:'NEW', updated:'UPDATED', missing_local:'MISSING',
+                    uptodate:'UP-TO-DATE', unverified:'UNVERIFIED', orphan:'ORPHAN'};
+const STAT_ORDER = {new:0, updated:1, missing_local:2, unverified:3, uptodate:4, orphan:5};
+function fmtDate(v){
+  if(v===null||v===undefined||v==='') return '';
+  if(typeof v==='string') return v.slice(0,16).replace('T',' ');
+  try{ return new Date(v*1000).toISOString().slice(0,16).replace('T',' '); }catch(e){ return ''; }
+}
+
+$('#scanBtn').onclick = async () => {
+  if(!selected.size){ $('#runMsg').textContent='Select some items first'; return; }
+  $('#runMsg').textContent=''; $('#comparePanel').classList.remove('hide');
+  $('#cmpBox').innerHTML='<div class="muted small" style="padding:8px;">Scanning cloud & comparing… (this can take a moment for large hubs)</div>';
+  $('#scanBtn').disabled = true; $('#syncBtn').disabled = true;
+  try{
+    const r = await api('/api/scan', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({targets:buildTargets([...selected.values()]), output_root:$('#outputRoot').value})});
+    lastPlan = (r.plans||[]).concat((r.orphans||[]));
+    renderCompare(r);
+  }catch(e){ $('#cmpBox').innerHTML='<div class="err small" style="padding:8px;">Scan failed: '+e.message+'</div>'; }
+  finally{ $('#scanBtn').disabled = !CFG.authenticated; }
+};
+
+function renderCompare(r){
+  const plans = (r.plans||[]).slice().sort((a,b)=>(STAT_ORDER[a.status]-STAT_ORDER[b.status])
+      || (a.rel_path||'').localeCompare(b.rel_path||''));
+  const orphans = r.orphans||[];
+  const c = r.counts||{};
+  $('#cmpSummary').textContent =
+    (c.new||0)+' new · '+(c.updated||0)+' updated · '+(c.uptodate||0)+' up-to-date · '
+    +(c.missing_local||0)+' missing · '+(c.unverified||0)+' unverified · '+(c.orphan||0)+' orphan';
+  if(!plans.length && !orphans.length){ $('#cmpBox').innerHTML='<div class="muted small" style="padding:8px;">Nothing to compare.</div>'; $('#syncBtn').disabled=true; return; }
+  const rows = [];
+  rows.push('<table class="cmp-t"><thead><tr><th></th><th>Status</th><th>Name</th><th>Ver</th><th>Cloud modified</th><th>Local modified</th><th>Path</th></tr></thead><tbody>');
+  plans.forEach((p,i)=>{
+    const ver = p.version_number ? ('v'+p.version_number
+        + (p.status==='updated'&&p.recorded_version_number?(' <span class="muted">(was v'+p.recorded_version_number+')</span>'):'')) : '';
+    rows.push('<tr data-i="'+i+'">'
+      +'<td><input type="checkbox" class="cmp-cb" '+(p.action_default?'checked':'')+'></td>'
+      +'<td><span class="stat '+p.status+'">'+STAT_LABEL[p.status]+'</span></td>'
+      +'<td class="name">'+(p.display_name||p.name||'')+'</td>'
+      +'<td>'+ver+'</td>'
+      +'<td>'+fmtDate(p.cloud_last_modified)+'</td>'
+      +'<td>'+fmtDate(p.local_mtime)+'</td>'
+      +'<td class="muted">'+(p.rel_path||'')+'</td></tr>');
+  });
+  orphans.forEach(o=>{
+    rows.push('<tr class="orphan"><td></td>'
+      +'<td><span class="stat orphan">ORPHAN</span></td>'
+      +'<td class="name">'+(o.name||'')+'</td>'
+      +'<td>'+(o.version_number?('v'+o.version_number):'')+'</td>'
+      +'<td></td><td></td><td class="muted">'+(o.dest_key||'')+'</td></tr>');
+  });
+  rows.push('</tbody></table>');
+  $('#cmpBox').innerHTML = rows.join('');
+  // Store the plan rows on the table for retrieval on Sync.
+  $('#cmpBox')._plans = plans;
+  updateSyncBtn();
+  $('#cmpBox').querySelectorAll('.cmp-cb').forEach(cb=>cb.onchange=updateSyncBtn);
+}
+
+function checkedPlanRows(){
+  const plans = $('#cmpBox')._plans || [];
+  const out = [];
+  $('#cmpBox').querySelectorAll('tr[data-i]').forEach(tr=>{
+    const cb = tr.querySelector('.cmp-cb');
+    if(cb && cb.checked) out.push(plans[+tr.dataset.i]);
+  });
+  return out;
+}
+function updateSyncBtn(){
+  const n = checkedPlanRows().length;
+  $('#syncBtn').disabled = n===0;
+  $('#syncBtn').textContent = n ? ('Sync selected ('+n+')') : 'Sync selected';
+}
+$('#cmpAll').onclick = () => { $('#cmpBox').querySelectorAll('.cmp-cb').forEach(cb=>cb.checked=true); updateSyncBtn(); };
+$('#cmpNone').onclick = () => { $('#cmpBox').querySelectorAll('.cmp-cb').forEach(cb=>cb.checked=false); updateSyncBtn(); };
+
+$('#syncBtn').onclick = async () => {
+  const rows = checkedPlanRows();
+  if(!rows.length) return;
+  const items = rows.map(p=>({project_id:p.project_id, version_id:p.version_id, name:p.name,
+    rel_path:p.rel_path, dest_key:p.dest_key, dest_base_rel:p.dest_base_rel, lineage_id:p.lineage_id,
+    display_name:p.display_name, last_modified:p.cloud_last_modified,
+    // Re-fetch (overwrite) when the cloud version changed, or when the user explicitly
+    // checks an unverified/up-to-date row to force a fresh, version-stamped copy.
+    overwrite: p.status==='updated' || p.status==='unverified' || p.status==='uptodate'}));
+  $('#runMsg').textContent='';
+  try{
+    await api('/api/download', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({items, output_root:$('#outputRoot').value})});
+    $('#downloadBtn').disabled = true; $('#scanBtn').disabled = true; $('#syncBtn').disabled = true;
+    $('#cancelBtn').classList.remove('hide');
+    startPolling();
+  }catch(e){ $('#runMsg').innerHTML='<span class="err">'+e.message+'</span>'; }
+};
+
 function startPolling(){ if(pollTimer) clearInterval(pollTimer); poll(); pollTimer=setInterval(poll, 1000); }
 
 const phaseTxt = {idle:'Idle', expanding:'Expanding items...', downloading:'Downloading...', done:'Done', cancelled:'Cancelled'};
@@ -391,11 +531,16 @@ async function poll(){
   if(!p.running){
     clearInterval(pollTimer); pollTimer=null;
     $('#downloadBtn').disabled = !CFG.authenticated;
+    $('#scanBtn').disabled = !CFG.authenticated;
     $('#cancelBtn').classList.add('hide');
     const r=p.results;
-    $('#runMsg').textContent = 'Done: '+r.exported.length+' exported, '+r.skipped.length
-        +' already existed, '+r.no_native.length+' no-native, '+r.failed.length+' failed';
+    $('#runMsg').textContent = 'Done: '+r.exported.length+' downloaded, '+r.skipped.length
+        +' already current, '+r.no_native.length+' no-native, '+r.failed.length+' failed';
     $('#retryBtn').disabled = r.failed.length===0;
+    // If a compare table is open, refresh it so statuses reflect what was just synced.
+    if(!$('#comparePanel').classList.contains('hide') && p.phase==='done' && selected.size){
+      $('#scanBtn').click();
+    }
   }
 }
 

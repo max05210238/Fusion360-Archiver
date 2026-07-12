@@ -171,21 +171,34 @@ reads, lists, and downloads — it **never edits, overwrites, or deletes** anyth
 > If "Load" shows **"APS lists no hubs"**, your personal hub may not be reachable over APS.
 > See Troubleshooting below.
 
-### B5. Download
-1. Click **Download selected** under "3. Run".
-2. Watch the progress bar and the current file name. For 100+ files this can take a while
-   (cloud fetch per file) — you can leave it running.
-3. To stop early, click **Cancel** (already-downloaded files are kept).
+### B5. Scan & Compare, then Sync
+1. Click **Scan & Compare** under "3. Run". The tool looks at every design you selected in
+   the cloud and compares it to what's already in your Download path — like FreeFileSync does
+   for two folders. Each design gets a status:
+   - **NEW** — never downloaded yet.
+   - **UPDATED** — you changed it in Fusion since the last backup (a newer version exists).
+     The table shows the new version number and the one you have.
+   - **MISSING** — it's recorded as downloaded but the local file is gone.
+   - **UP-TO-DATE** — your local copy already matches the cloud; nothing to do.
+   - **UNVERIFIED** — a file is on disk but from before this compare feature existed, so its
+     version is unknown. Left unchecked by default; check it if you want to re-fetch to be sure.
+   - **ORPHAN** — removed from the cloud but still in your backup. **Never deleted**, just listed.
+2. New / Updated / Missing rows are **checked** by default. Adjust the checkboxes, then click
+   **Sync selected** to download only those.
+3. Watch the progress bar and the current file name. For 100+ files this can take a while
+   (cloud fetch per file) — you can leave it running. **Cancel** stops early; finished files are kept.
+
+> Prefer the old behavior? **Download all selected** still works — it downloads everything you
+> selected and skips files already on disk by name.
 
 ### B6. Check results and retry missing
 Under "4. Results", four tabs:
-- **Exported** — newly downloaded files.
-- **Already exists** — skipped because they were already downloaded (safe to re-run anytime).
+- **Exported** — newly downloaded (new or updated) files.
+- **Already current** — skipped because your local copy already matched the cloud.
 - **No native format** — the cloud had no f3d/f3z to offer for that item.
 - **Failed** — something went wrong (e.g. a network hiccup). The error is shown.
 
 If anything is in **Failed**, click **↻ Retry all failed** to fetch just those again.
-Already-downloaded files are skipped, so retrying is always safe.
 
 A text log is also written to `export_log.txt` inside your download path.
 
@@ -222,8 +235,11 @@ and deleting them when done removes any lingering risk.
 
 ## Using it again later
 - Double-click the launcher again (no more macOS prompts after the first time).
-- Your settings and sign-in are remembered. Just **Load**, select, **Download**.
-- Re-running never re-downloads files you already have, so it's a safe way to "fill in" anything new.
+- Your settings and sign-in are remembered. Just **Load**, select, **Scan & Compare**, **Sync selected**.
+- Re-running is version-aware: it downloads only designs that are **new** or that you **changed**
+  in Fusion since last time (matched by Autodesk version, not just file name), and skips
+  everything unchanged — so it's a safe, fast way to keep the backup current. The tool remembers
+  what it downloaded in a small `.aps_manifest.json` inside your Download path (leave it there).
 
 ## Stopping / removing
 - **Stop the app**: close the small black Terminal window.
