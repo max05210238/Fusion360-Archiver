@@ -68,7 +68,8 @@ Two routes, so you're never stuck:
   Panel ▸ Upload), with edit history intact.
 - **Assemblies as `.f3z`** containing **all linked parts**.
 - Your **project / folder structure** rebuilt locally.
-- A **hands-off** workflow (sign in → select → download → retry failures) via a local Web UI.
+- A **hands-off** workflow (sign in → select → scan & compare → sync) via a local Web UI, with
+  **incremental re-runs** that only fetch new or changed designs (see "What's new" below).
 - A real, **reversible** backup — see "Restoring your backup into Fusion" below.
 
 ### At a glance
@@ -82,6 +83,48 @@ Two routes, so you're never stuck:
 | Edit history preserved | ❌ | ✅ | ✅ |
 | Fully automatic / headless | ❌ | ❌ | ✅ |
 | Needs the Fusion GUI | yes | yes | no (local web UI) |
+
+---
+
+## What's new: incremental sync (and exactly what it does to your files)
+
+*Added 2026-07 — Route B only. Full transparency, because you shouldn't have to trust this — see
+"Is this safe?" below to verify it.*
+
+Before, re-running only skipped a file if a file **with the same name** already existed on disk. So
+if you edited a design in Fusion (which creates a new cloud version) but the name didn't change, the
+old local copy was kept and your backup silently went stale. This release fixes that with a
+**FreeFileSync-style compare-then-sync** flow.
+
+**What it does now:**
+- **Scan & Compare** — before downloading, it compares the cloud against your local folder and shows
+  every design with a status: **NEW**, **UPDATED** (with the old vs. new version number), **MISSING**
+  (recorded but the local file is gone), **UP-TO-DATE**, **UNVERIFIED**, or **ORPHAN** (removed from
+  the cloud). You tick which ones to fetch, then click **Sync selected**.
+- **Only new/changed files are downloaded** on a re-run — matched by Autodesk's **version**, not just
+  the file name — so an edited design is correctly re-fetched even if its name is unchanged, and
+  unchanged files are skipped.
+- CLI equivalents: `python aps_archiver.py --dry-run` (preview) and `--sync` (apply).
+
+**Exactly what it writes to your machine (nothing leaves it):**
+- A small plain-text file **`.aps_manifest.json` in your backup folder**. It records, per file: the
+  design name, the Autodesk **version id/number** it was downloaded from, the file size, and
+  local/cloud timestamps. That's how a re-run knows what changed. It's ordinary JSON — open it, read
+  it, or delete it anytime (deleting it just makes the next scan mark existing files "UNVERIFIED").
+  It is **never uploaded** anywhere.
+- **The one case it modifies an existing local file:** when you Sync a design marked **UPDATED**, it
+  **overwrites that single local file** with the newer version (written to a `.part` file first, then
+  atomically swapped in, so a crash can't corrupt it). It only ever overwrites a file **it** created,
+  and only the specific rows **you checked and clicked Sync on**.
+
+**What it still does NOT do (unchanged):**
+- It **never deletes** any local file. A design you removed from the cloud is shown as **ORPHAN** and
+  your local copy is **kept**.
+- It **never touches your cloud data** — same read-only posture as before, same scopes
+  (`data:read data:create account:read`), no new permissions were added for this feature.
+- Your existing backups are safe: files from before this feature has no manifest record, so they show
+  as **UNVERIFIED** and are **left untouched** unless you explicitly choose to re-fetch them.
+- The old one-shot **"Download all selected"** button still works if you'd rather not use compare.
 
 ---
 
@@ -183,8 +226,18 @@ Then open <http://localhost:8080> and follow the four on-screen steps:
    on the page, default `http://localhost:8080/api/auth/callback`.)
 2. **"Sign in to Autodesk"** (top right): it redirects you to authorize; on return it shows "Signed in".
 3. **2. Select**: click "Load" to list hubs/projects, expand and check; checking a whole project = all designs under it. You can also "Select all projects".
-4. **3. Run**: click "Download selected" and watch live progress.
-5. **4. Results**: four buckets — Exported / Already exists / No native format / Failed; if anything failed, click **"↻ Retry all failed"** to refetch (already-downloaded files are skipped).
+4. **3. Run**: click **"Scan & Compare"** — the tool diffs the cloud against your local
+   folder (FreeFileSync-style) and lists each design as **New / Updated / Up-to-date /
+   Missing / Unverified / Orphan**, with the cloud version number and modified dates. Check
+   the rows you want and click **"Sync selected"** to download only those. (A plain
+   "Download all selected" button is still there if you'd rather skip the compare step.)
+5. **4. Results**: four buckets — Exported / Already current / No native format / Failed; if anything failed, click **"↻ Retry all failed"** to refetch.
+
+> **Re-runnable, version-aware.** After the first backup the tool records what version of
+> each design it saved (a small `.aps_manifest.json` in your download folder). On later runs
+> it re-downloads **only** designs that are new or that changed in Fusion — even when the file
+> name is unchanged — and never touches unchanged files. Designs you deleted in the cloud are
+> reported as "orphan" but your local copies are **never** deleted.
 
 > The UI and the CLI below share the same download logic and the same permissions (see
 > "Data security" below): the tool only reads, lists, and triggers downloads — it never
@@ -234,12 +287,19 @@ It runs two checks and prints the results:
 After a successful spike, **manually unzip** the `.f3z` you fetched to confirm it
 contains all linked parts (proving assemblies are packaged).
 
-### 4. Full download
+### 4. Full download / incremental sync
 ```bash
-python aps_archiver.py --all      # preserves structure, re-runnable (existing files are skipped)
+python aps_archiver.py --dry-run  # preview the plan: new / updated / up-to-date / missing / orphan
+python aps_archiver.py --sync     # version-aware sync: download only new & changed files (== --all)
+python aps_archiver.py --all      # same as --sync (kept for compatibility)
 python aps_archiver.py --list     # just inspect the hub/project tree first
 ```
-Output goes to `APS_OUTPUT_ROOT`, with `export_log.txt` (exported / skipped / no native format / failed).
+`--sync` compares the cloud against your local folder using a `.aps_manifest.json` it keeps in
+`APS_OUTPUT_ROOT`, so re-runs re-download **only** what is new or has a newer version in Fusion
+(matched by Autodesk version, not just file name) and skip everything unchanged. `--dry-run`
+prints the same comparison without downloading anything. Output goes to `APS_OUTPUT_ROOT`, with
+`export_log.txt` (synced / no native format / failed / orphan). Orphans (removed from the cloud)
+are only reported — local files are never deleted.
 
 > The first run opens a browser to sign in to Autodesk and authorize; the token is
 > cached to `~/.aps_archiver_token.json` (gitignored — do not commit it).
@@ -318,9 +378,12 @@ is built so you don't have to trust the author; you can *verify* instead:
 - **You use your own Autodesk app and your own keys.** You create the APS app under *your* account; the
   login token is stored only on your machine and you can revoke it anytime by deleting the app. The
   author never receives your keys, token, or files.
-- **It cannot delete or overwrite your designs.** It requests `data:read` + `data:create` (the latter
-  only because Autodesk's download API requires it to build the archive). It never requests write or
-  delete scopes and never calls them. Worst case, it reads and downloads.
+- **It cannot delete or overwrite your designs in the cloud.** It requests `data:read` + `data:create`
+  (the latter only because Autodesk's download API requires it to build the archive). It never requests
+  write or delete scopes and never calls them. Worst case, it reads and downloads. (Locally, the sync
+  feature will overwrite one of *its own* downloaded files when you Sync a design that changed in the
+  cloud, and it writes a `.aps_manifest.json` index in your backup folder — see "What's new" above. It
+  never deletes local files.)
 - **It only talks to Autodesk.** The only network destinations in the code are
   `developer.api.autodesk.com` (Autodesk) and `localhost` (your machine). No telemetry, no analytics,
   no phone-home — search the code for `http` and check.
@@ -347,6 +410,7 @@ created and live **only on your computer**, in your home folder, never uploaded 
 | Client ID | Your APS app's public identifier | low |
 | Client Secret | Your APS app's **password** | **high — treat like a password** |
 | `~/.aps_archiver_token.json` | Login token for your Autodesk data (scopes below) | high while valid |
+| `.aps_manifest.json` (in your backup folder) | Local sync index: per file, its Autodesk version + size + timestamps (no keys, no secrets) | low — never uploaded |
 
 **What permissions (scopes) the tool requests:** `data:read data:create account:read`.
 - `data:read` / `account:read` — list and read your hubs, projects, folders and designs.

@@ -94,6 +94,230 @@ def safe_name(name):
     return name.strip().rstrip('.')
 
 
+# ======================= Sync manifest =======================
+# A small JSON state file at the backup root that records, per downloaded file, the
+# cloud version it came from. It is what turns a re-run into a real incremental sync
+# (only download what is new or changed) instead of the old filename-only skip.
+
+MANIFEST_NAME = '.aps_manifest.json'
+MANIFEST_SCHEMA = 1
+
+# Plan status codes (also the labels shown to the user).
+STATUS_NEW = 'new'                    # not in manifest, no file on disk        -> download
+STATUS_UPDATED = 'updated'            # cloud version differs from recorded      -> download (overwrite)
+STATUS_UPTODATE = 'uptodate'          # recorded version matches, file present   -> skip
+STATUS_MISSING_LOCAL = 'missing_local'  # recorded but file gone from disk       -> re-download
+STATUS_UNVERIFIED = 'unverified'      # file on disk but no record (pre-manifest)-> skip by default
+STATUS_ORPHAN = 'orphan'              # recorded/on disk but no longer in cloud  -> report only
+
+# Statuses whose default action is "download this file".
+_DOWNLOAD_STATUSES = {STATUS_NEW, STATUS_UPDATED, STATUS_MISSING_LOCAL}
+
+
+def manifest_path(output_root):
+    return os.path.join(output_root, MANIFEST_NAME)
+
+
+def load_manifest(output_root):
+    """Return the manifest dict, tolerating a missing or corrupt file."""
+    path = manifest_path(output_root)
+    if os.path.exists(path):
+        try:
+            with open(path, encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get('records'), dict):
+                return data
+        except Exception:
+            pass
+    return {'schema': MANIFEST_SCHEMA, 'records': {}}
+
+
+def save_manifest(output_root, man):
+    """Atomically persist the manifest (write to .part then os.replace)."""
+    os.makedirs(output_root, exist_ok=True)
+    path = manifest_path(output_root)
+    tmp = path + '.part'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(man, f, indent=1)
+    os.replace(tmp, path)
+
+
+def manifest_get(man, dest_key):
+    return man.get('records', {}).get(dest_key)
+
+
+def manifest_put(man, dest_key, record):
+    man.setdefault('records', {})[dest_key] = record
+
+
+def _rel_key(output_root, dest_path):
+    """The manifest key for a destination file: its path relative to the backup root,
+    with forward slashes so keys are stable across OSes."""
+    rel = os.path.relpath(dest_path, output_root)
+    return rel.replace(os.sep, '/')
+
+
+def _existing_local(dest_base):
+    """Return (dest_path, file_type) for an already-downloaded native file at dest_base,
+    probing the preferred formats; (None, None) if nothing is on disk."""
+    for f in PREFERRED_FORMATS:
+        cand = dest_base + '.' + f
+        if os.path.exists(cand):
+            return cand, f
+    return None, None
+
+
+# ======================= Compare / plan =======================
+
+def plan_item(cloud_item, dest_base, man, output_root):
+    """Classify one cloud item against the manifest + local disk. Pure/read-only.
+    `cloud_item` is a normalized dict: version_id, name, rel_path, lineage_id,
+    last_modified, display_name, project_id. `dest_base` is the extension-less
+    destination path already disambiguated by _claim_dest."""
+    version_id = cloud_item.get('version_id')
+    lineage_id = cloud_item.get('lineage_id')
+    record = None
+    rec_key = None
+
+    # Prefer matching by the recorded dest key of this lineage (survives name probing);
+    # fall back to whichever extension the record used.
+    for key, rec in man.get('records', {}).items():
+        if lineage_id and rec.get('lineage_id') == lineage_id:
+            record, rec_key = rec, key
+            break
+
+    local_path, local_ft = _existing_local(dest_base)
+
+    if record is not None:
+        rec_path = os.path.join(output_root, rec_key.replace('/', os.sep))
+        file_present = os.path.exists(rec_path) or local_path is not None
+        dest_key = rec_key
+        if record.get('version_id') == version_id:
+            status = STATUS_UPTODATE if file_present else STATUS_MISSING_LOCAL
+        else:
+            status = STATUS_UPDATED
+    elif local_path is not None:
+        status = STATUS_UNVERIFIED
+        dest_key = _rel_key(output_root, local_path)
+    else:
+        status = STATUS_NEW
+        dest_key = None  # extension unknown until download picks a format
+
+    local_mtime = None
+    local_size = None
+    ref_path = local_path or (record and os.path.join(output_root, rec_key.replace('/', os.sep)))
+    if ref_path and os.path.exists(ref_path):
+        try:
+            local_mtime = os.path.getmtime(ref_path)
+            local_size = os.path.getsize(ref_path)
+        except OSError:
+            pass
+
+    return {
+        'status': status,
+        'action_default': status in _DOWNLOAD_STATUSES,
+        'dest_base': dest_base,
+        # Extension-less destination relative to the backup root. Always present (even for
+        # NEW items, whose extension isn't known yet) so the download step reuses the exact
+        # disambiguated base and can't drift or collide with a same-named design.
+        'dest_base_rel': os.path.relpath(dest_base, output_root).replace(os.sep, '/'),
+        'dest_key': dest_key,
+        'version_id': version_id,
+        'version_number': version_number_from_id(version_id),
+        'recorded_version_number': record.get('version_number') if record else None,
+        'lineage_id': lineage_id,
+        'project_id': cloud_item.get('project_id'),
+        'name': cloud_item.get('name'),
+        'rel_path': cloud_item.get('rel_path'),
+        'display_name': cloud_item.get('display_name') or cloud_item.get('name'),
+        'cloud_last_modified': cloud_item.get('last_modified'),
+        'local_mtime': local_mtime,
+        'local_size': local_size,
+        'file_type': (record or {}).get('file_type') or local_ft,
+    }
+
+
+def _claim_dest(output_root, cloud_item, man, claimed):
+    """Compute the extension-less destination path for a cloud item, disambiguating
+    same-named designs deterministically. A lineage that already has a manifest record
+    reuses that exact base (regardless of traversal order); otherwise a per-run ' (n)'
+    suffix keyed on lineage id is assigned so two different same-named designs never
+    collide. Returns dest_base (absolute, no extension)."""
+    lineage_id = cloud_item.get('lineage_id')
+
+    # Reuse a prior assignment recorded in the manifest so keys are stable across runs.
+    for key, rec in man.get('records', {}).items():
+        if lineage_id and rec.get('lineage_id') == lineage_id:
+            base_no_ext = os.path.splitext(os.path.join(output_root, key.replace('/', os.sep)))[0]
+            claimed[base_no_ext] = lineage_id
+            return base_no_ext
+
+    rel_dir = os.path.join(output_root, cloud_item.get('rel_path', ''))
+    stem = safe_name(os.path.splitext(cloud_item.get('name', 'item'))[0])
+    base = os.path.join(rel_dir, stem)
+    cand, n = base, 2
+    while claimed.get(cand, lineage_id) != lineage_id:
+        cand = '{} ({})'.format(base, n)
+        n += 1
+    claimed[cand] = lineage_id
+    return cand
+
+
+def build_plan(collected_items, man, output_root):
+    """Diff a list of normalized cloud items against the manifest + disk.
+    Returns {'plans': [...], 'orphans': [...], 'counts': {...}}. Read-only."""
+    claimed = {}
+    plans = []
+    seen_lineages = set()
+    for it in collected_items:
+        dest_base = _claim_dest(output_root, it, man, claimed)
+        p = plan_item(it, dest_base, man, output_root)
+        plans.append(p)
+        if it.get('lineage_id'):
+            seen_lineages.add(it['lineage_id'])
+
+    # Orphans: manifest records whose lineage was not seen in the cloud this run.
+    orphans = []
+    for key, rec in man.get('records', {}).items():
+        if rec.get('lineage_id') and rec['lineage_id'] not in seen_lineages:
+            orphans.append({
+                'status': STATUS_ORPHAN,
+                'action_default': False,
+                'dest_key': key,
+                'name': rec.get('display_name'),
+                'version_number': rec.get('version_number'),
+                'lineage_id': rec.get('lineage_id'),
+            })
+
+    counts = {}
+    for p in plans:
+        counts[p['status']] = counts.get(p['status'], 0) + 1
+    if orphans:
+        counts[STATUS_ORPHAN] = len(orphans)
+    return {'plans': plans, 'orphans': orphans, 'counts': counts}
+
+
+def make_record(dest_path, output_root, version_id, cloud_item, file_type):
+    """Build a manifest record for a freshly-downloaded file."""
+    try:
+        size = os.path.getsize(dest_path)
+        mtime = os.path.getmtime(dest_path)
+    except OSError:
+        size = mtime = None
+    return {
+        'lineage_id': cloud_item.get('lineage_id'),
+        'version_id': version_id,
+        'version_number': version_number_from_id(version_id),
+        'file_type': file_type,
+        'size': size,
+        'local_mtime': mtime,
+        'cloud_last_modified': cloud_item.get('last_modified'),
+        'downloaded_at': time.time(),
+        'project_id': cloud_item.get('project_id'),
+        'display_name': cloud_item.get('display_name') or cloud_item.get('name'),
+    }
+
+
 # ======================= OAuth (3-legged) =======================
 
 class _CallbackHandler(BaseHTTPRequestHandler):
@@ -292,7 +516,8 @@ def get_root_folder(token, hub_id, project_id):
 
 
 def folder_contents(token, project_id, folder_id):
-    """Return (folders, items). Each item carries its tip version id."""
+    """Return (folders, items). Each item carries its tip version id plus the extra
+    metadata used for version-aware sync (lineage id, cloud modified time, name)."""
     folders, items = [], []
     url = BASE + '/data/v1/projects/{}/folders/{}/contents'.format(project_id, folder_id)
     while url:
@@ -302,10 +527,30 @@ def folder_contents(token, project_id, folder_id):
                 folders.append(obj)
             elif obj['type'] == 'items':
                 tip = obj.get('relationships', {}).get('tip', {}).get('data', {})
+                attrs = obj.get('attributes', {})
                 obj['_tip_version_id'] = tip.get('id')
+                # The item id is the version-independent lineage id -- stable across edits,
+                # so it is the right anchor for a re-runnable sync manifest.
+                obj['_lineage_id'] = obj.get('id')
+                obj['_last_modified'] = attrs.get('lastModifiedTime')
+                obj['_display_name'] = attrs.get('displayName')
                 items.append(obj)
         url = data.get('links', {}).get('next', {}).get('href')
     return folders, items
+
+
+def version_number_from_id(version_id):
+    """Best-effort parse of the human version number from a tip version URN, e.g.
+    'urn:adsk.wipprod:fs.file:vf.AbC?version=7' -> 7. Returns None when absent.
+    For display only -- change detection always compares the full version_id string."""
+    if not version_id:
+        return None
+    try:
+        qs = parse_qs(urlparse(version_id).query)
+        v = qs.get('version', [None])[0]
+        return int(v) if v is not None else None
+    except (ValueError, TypeError):
+        return None
 
 
 def download_formats(token, project_id, version_id):
@@ -423,9 +668,15 @@ def download_to(url, dest_path):
     return os.path.getsize(dest_path)
 
 
-def fetch_native(token, project_id, version_id, dest_no_ext):
+def fetch_native(token, project_id, version_id, dest_no_ext, overwrite=False):
     """For one version, pick an available native format and download to dest_no_ext + ext.
-    Returns (dest_path, file_type) or (None, available_formats)."""
+    Returns (dest_path, file_type) or (None, available_formats).
+    With overwrite=False (default) an existing file is treated as done (filename-based
+    skip, backward-compatible). With overwrite=True the file is re-fetched and atomically
+    replaced -- used by the version-aware sync when a design changed in the cloud."""
+    dest_probe = _existing_local(dest_no_ext)[0]
+    if dest_probe and not overwrite:
+        return dest_probe, os.path.splitext(dest_probe)[1].lstrip('.')
     fmts = download_formats(token, project_id, version_id)
     chosen = next((f for f in PREFERRED_FORMATS if f in fmts), None)
     if not chosen:
@@ -434,7 +685,7 @@ def fetch_native(token, project_id, version_id, dest_no_ext):
     object_id, direct_link = resolve_download_storage(token, project_id, post_resp)
     url = direct_link or signed_s3_download_url(token, object_id)
     dest = dest_no_ext + '.' + chosen
-    if os.path.exists(dest):
+    if os.path.exists(dest) and not overwrite:
         return dest, chosen   # already exists, treat as done (re-runnable)
     download_to(url, dest)
     return dest, chosen
@@ -529,62 +780,157 @@ def mode_spike(token):
         log('   manual_download_list.txt for manual downloads.')
 
 
-def mode_all(token):
-    os.makedirs(OUTPUT_ROOT, exist_ok=True)
-    results = {'exported': [], 'skipped': [], 'failed': [], 'no_native': []}
-    hubs = list_hubs(token)
-    log('Starting full download, {} hub(s) -> {}'.format(len(hubs), OUTPUT_ROOT))
+def _normalize_item(project_id, rel, it):
+    """Turn a raw traversal item into the flat dict the plan/sync code consumes."""
+    return {
+        'project_id': project_id,
+        'version_id': it.get('_tip_version_id'),
+        'name': it['attributes'].get('displayName', 'item'),
+        'rel_path': rel,
+        'lineage_id': it.get('_lineage_id') or it.get('id'),
+        'last_modified': it.get('_last_modified'),
+        'display_name': it.get('_display_name') or it['attributes'].get('displayName'),
+    }
 
-    # Disambiguate two distinct designs that share a name in the same folder (see the UI worker).
-    claimed = {}
 
-    def _unique_base(base, vid):
-        cand, n = base, 2
-        while claimed.get(cand, vid) != vid:
-            cand = '{} ({})'.format(base, n)
-            n += 1
-        claimed[cand] = vid
-        return cand
-
-    for h in hubs:
-        hid, hname = h['id'], h['attributes']['name']
+def _collect_cloud_items(token):
+    """Traverse every hub/project/folder and return a flat list of normalized items
+    that have a downloadable tip version. Shared by --all / --dry-run / --sync."""
+    collected = []
+    for h in list_hubs(token):
+        hid = h['id']
         for p in list_projects(token, hid):
             pid = p['id']
             pname = safe_name(p['attributes']['name'])
             try:
                 root = get_root_folder(token, hid, pid)
             except Exception as e:
-                results['failed'].append('project {}: {}'.format(pname, e))
+                log('  x project {}: {}'.format(pname, e))
                 continue
             for rel, it in _iter_all_items(token, hid, pid, root, pname):
-                vid = it.get('_tip_version_id')
-                iname = it['attributes'].get('displayName', 'item')
-                rel_dir = os.path.join(OUTPUT_ROOT, rel)
-                if not vid:
-                    results['skipped'].append('{}/{} (no tip version)'.format(rel, iname))
-                    continue
-                dest_base = _unique_base(os.path.join(rel_dir, safe_name(os.path.splitext(iname)[0])), vid)
-                try:
-                    dest, ft = fetch_native(token, pid, vid, dest_base)
-                    if dest:
-                        results['exported'].append(dest)
-                        log('  + {}  [{}]'.format(dest, ft))
-                    else:
-                        results['no_native'].append('{}/{} (available formats: {})'.format(rel, iname, sorted(ft)))
-                        log('  - no native format: {}/{}'.format(rel, iname))
-                except Exception as e:
-                    results['failed'].append('{}/{}: {}'.format(rel, iname, e))
-                    log('  x {}/{}: {}'.format(rel, iname, e))
+                norm = _normalize_item(pid, rel, it)
+                if norm['version_id']:
+                    collected.append(norm)
+    return collected
 
-    log_path = os.path.join(OUTPUT_ROOT, 'export_log.txt')
+
+def _fmt_ts(ts):
+    """Format an epoch seconds float or an ISO string for display; '' when unknown."""
+    if ts is None:
+        return ''
+    if isinstance(ts, str):
+        return ts[:19].replace('T', ' ')
+    try:
+        return time.strftime('%Y-%m-%d %H:%M', time.localtime(ts))
+    except (TypeError, ValueError):
+        return ''
+
+
+def _format_plan_table(plan):
+    """Return a human-readable diff table for the CLI --dry-run / --sync summary."""
+    order = [STATUS_NEW, STATUS_UPDATED, STATUS_MISSING_LOCAL,
+             STATUS_UNVERIFIED, STATUS_UPTODATE]
+    label = {STATUS_NEW: 'NEW', STATUS_UPDATED: 'UPDATED',
+             STATUS_MISSING_LOCAL: 'MISSING', STATUS_UNVERIFIED: 'UNVERIFIED',
+             STATUS_UPTODATE: 'UP-TO-DATE'}
+    lines = []
+    by_status = {}
+    for p in plan['plans']:
+        by_status.setdefault(p['status'], []).append(p)
+    for st in order:
+        rows = by_status.get(st, [])
+        if not rows:
+            continue
+        lines.append('--- {} ({}) ---'.format(label[st], len(rows)))
+        for p in rows:
+            vnum = 'v{}'.format(p['version_number']) if p['version_number'] else ''
+            lines.append('  {:<10} {}/{}'.format(vnum, p['rel_path'], p['name']))
+    if plan['orphans']:
+        lines.append('--- CLOUD-DELETED / ORPHAN ({}) [kept, never removed] ---'.format(len(plan['orphans'])))
+        for o in plan['orphans']:
+            lines.append('  {}'.format(o['dest_key']))
+    return '\n'.join(lines)
+
+
+def mode_plan(token, output_root=None):
+    """Dry-run: traverse, diff against the manifest, print the plan. Writes nothing."""
+    output_root = output_root or OUTPUT_ROOT
+    man = load_manifest(output_root)
+    log('Scanning cloud and comparing against {} ...'.format(output_root))
+    collected = _collect_cloud_items(token)
+    plan = build_plan(collected, man, output_root)
+    log(_format_plan_table(plan))
+    c = plan['counts']
+    log('\nSummary: new {} / updated {} / up-to-date {} / missing {} / unverified {} / orphan {}'.format(
+        c.get(STATUS_NEW, 0), c.get(STATUS_UPDATED, 0), c.get(STATUS_UPTODATE, 0),
+        c.get(STATUS_MISSING_LOCAL, 0), c.get(STATUS_UNVERIFIED, 0), c.get(STATUS_ORPHAN, 0)))
+    log('(dry run -- nothing downloaded. Run with --sync to apply.)')
+    return plan
+
+
+def _execute_plan(token, output_root, plan, man, results):
+    """Download every plan entry whose default action is 'download', updating the
+    manifest incrementally. Shared by mode_sync and (via mode_all) the full run."""
+    to_do = [p for p in plan['plans'] if p['action_default']]
+    log('Syncing {} file(s) -> {}'.format(len(to_do), output_root))
+    for p in to_do:
+        overwrite = p['status'] == STATUS_UPDATED
+        cloud_item = {
+            'lineage_id': p['lineage_id'], 'project_id': p['project_id'],
+            'display_name': p['display_name'], 'name': p['name'],
+            'last_modified': p['cloud_last_modified'],
+        }
+        try:
+            dest, ft = fetch_native(token, p['project_id'], p['version_id'],
+                                    p['dest_base'], overwrite=overwrite)
+            if dest:
+                results['exported'].append(dest)
+                manifest_put(man, _rel_key(output_root, dest),
+                             make_record(dest, output_root, p['version_id'], cloud_item, ft))
+                save_manifest(output_root, man)
+                log('  + [{}] {}/{}  [{}]'.format(p['status'], p['rel_path'], p['name'], ft))
+            else:
+                results['no_native'].append('{}/{} (formats: {})'.format(
+                    p['rel_path'], p['name'], sorted(ft) if isinstance(ft, set) else ft))
+                log('  - no native format: {}/{}'.format(p['rel_path'], p['name']))
+        except Exception as e:
+            results['failed'].append('{}/{}: {}'.format(p['rel_path'], p['name'], e))
+            log('  x {}/{}: {}'.format(p['rel_path'], p['name'], e))
+
+
+def mode_sync(token, output_root=None):
+    """Version-aware download: only new/updated/missing files; writes the manifest."""
+    output_root = output_root or OUTPUT_ROOT
+    os.makedirs(output_root, exist_ok=True)
+    man = load_manifest(output_root)
+    results = {'exported': [], 'skipped': [], 'failed': [], 'no_native': []}
+    collected = _collect_cloud_items(token)
+    plan = build_plan(collected, man, output_root)
+    c = plan['counts']
+    log('Plan: new {} / updated {} / up-to-date {} / missing {} / unverified {} / orphan {}'.format(
+        c.get(STATUS_NEW, 0), c.get(STATUS_UPDATED, 0), c.get(STATUS_UPTODATE, 0),
+        c.get(STATUS_MISSING_LOCAL, 0), c.get(STATUS_UNVERIFIED, 0), c.get(STATUS_ORPHAN, 0)))
+    _execute_plan(token, output_root, plan, man, results)
+    save_manifest(output_root, man)
+
+    log_path = os.path.join(output_root, 'export_log.txt')
     with open(log_path, 'w', encoding='utf-8') as fh:
-        for key, title in [('exported', 'Exported'), ('skipped', 'Skipped'),
-                           ('no_native', 'No native format'), ('failed', 'Failed')]:
+        for key, title in [('exported', 'Synced'), ('no_native', 'No native format'),
+                           ('failed', 'Failed')]:
             fh.write('=== {} ({}) ===\n'.format(title, len(results[key])))
             fh.write('\n'.join(map(str, results[key])) + '\n\n')
-    log('\nDone. Exported {} / skipped {} / no-native {} / failed {}\nSee {}'.format(
-        len(results['exported']), len(results['skipped']),
-        len(results['no_native']), len(results['failed']), log_path))
+        if plan['orphans']:
+            fh.write('=== Cloud-deleted / orphan ({}) [kept locally] ===\n'.format(len(plan['orphans'])))
+            fh.write('\n'.join(o['dest_key'] for o in plan['orphans']) + '\n\n')
+    log('\nDone. Synced {} / no-native {} / failed {} / orphan {}\nSee {}'.format(
+        len(results['exported']), len(results['no_native']),
+        len(results['failed']), len(plan['orphans']), log_path))
+
+
+def mode_all(token):
+    """Full run, now manifest-backed: downloads everything on a fresh backup and
+    becomes an incremental sync on re-runs (skips unchanged, re-fetches updated)."""
+    mode_sync(token)
 
 
 # ======================= main =======================
@@ -594,7 +940,10 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument('--spike', action='store_true', help='validate personal hub + Downloads API (run this first)')
     g.add_argument('--list', action='store_true', help='only print the hub/project structure')
-    g.add_argument('--all', action='store_true', help='download the entire hub automatically')
+    g.add_argument('--all', action='store_true', help='download/sync the entire hub (version-aware, re-runnable)')
+    g.add_argument('--sync', action='store_true', help='same as --all: incremental version-aware sync')
+    g.add_argument('--dry-run', '--plan', dest='dry_run', action='store_true',
+                   help='preview the sync plan (new/updated/etc.) without downloading')
     args = ap.parse_args()
 
     token = get_token()
@@ -602,8 +951,10 @@ def main():
         mode_list(token)
     elif args.spike:
         mode_spike(token)
-    elif args.all:
-        mode_all(token)
+    elif args.dry_run:
+        mode_plan(token)
+    elif args.sync or args.all:
+        mode_sync(token)
 
 
 if __name__ == '__main__':

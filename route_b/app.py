@@ -129,7 +129,8 @@ def _reset_progress(output_root):
 # ============================ Download worker ============================
 
 def _expand_targets(token, targets):
-    """Expand project / folder / item targets into a flat item list."""
+    """Expand project / folder / item targets into a flat list of normalized items
+    (project_id, version_id, name, rel_path, lineage_id, last_modified, display_name)."""
     items = []
     for t in targets:
         ttype = t.get('type')
@@ -139,62 +140,87 @@ def _expand_targets(token, targets):
                 'version_id': t['version_id'],
                 'name': t['name'],
                 'rel_path': t['rel_path'],
+                'lineage_id': t.get('lineage_id') or t.get('item_id'),
+                'last_modified': t.get('last_modified'),
+                'display_name': t.get('name'),
             })
         elif ttype == 'folder':
             for rel, it in aps._iter_all_items(token, t.get('hub_id'), t['project_id'],
                                                t['folder_id'], t['rel_path']):
-                vid = it.get('_tip_version_id')
-                if vid:
-                    items.append({'project_id': t['project_id'], 'version_id': vid,
-                                  'name': it['attributes'].get('displayName', 'item'), 'rel_path': rel})
+                if it.get('_tip_version_id'):
+                    items.append(aps._normalize_item(t['project_id'], rel, it))
         elif ttype == 'project':
             root = aps.get_root_folder(token, t['hub_id'], t['project_id'])
             base = aps.safe_name(t['name'])
             for rel, it in aps._iter_all_items(token, t['hub_id'], t['project_id'], root, base):
-                vid = it.get('_tip_version_id')
-                if vid:
-                    items.append({'project_id': t['project_id'], 'version_id': vid,
-                                  'name': it['attributes'].get('displayName', 'item'), 'rel_path': rel})
+                if it.get('_tip_version_id'):
+                    items.append(aps._normalize_item(t['project_id'], rel, it))
     return items
 
 
-def _download_worker(output_root, targets):
+def _download_worker(output_root, targets, items=None):
     try:
         token = web_token()
-        items = _expand_targets(token, targets)
+        man = aps.load_manifest(output_root)
+
+        if items is None:
+            # Legacy path: expand tree targets and disambiguate deterministically
+            # (manifest-seeded) so dest keys match a prior run.
+            expanded = _expand_targets(token, targets)
+            claimed = {}
+            work = []
+            for it in expanded:
+                dest_base = aps._claim_dest(output_root, it, man, claimed)
+                work.append({**it, 'dest_base': dest_base, 'overwrite': False})
+        else:
+            # Pre-planned path from /api/scan: honor the dest_key the plan keyed on.
+            work = []
+            for it in items:
+                # Prefer the disambiguated base the scan computed (dest_base_rel), so two
+                # same-named designs never collide. Fall back to dest_key, then to a derived path.
+                base_rel = it.get('dest_base_rel')
+                if base_rel:
+                    dest_base = os.path.join(output_root, base_rel.replace('/', os.sep))
+                elif it.get('dest_key'):
+                    dest_base = os.path.splitext(
+                        os.path.join(output_root, it['dest_key'].replace('/', os.sep)))[0]
+                else:
+                    dest_base = os.path.join(output_root, it['rel_path'],
+                                             aps.safe_name(os.path.splitext(it['name'])[0]))
+                work.append({**it, 'dest_base': dest_base,
+                             'overwrite': bool(it.get('overwrite'))})
+
         with LOCK:
-            PROGRESS['total'] = len(items)
+            PROGRESS['total'] = len(work)
             PROGRESS['phase'] = 'downloading'
 
-        # Two distinct designs can share the same name in the same Fusion folder. Keep a per-run
-        # map so the second one gets a "(2)" suffix instead of being mistaken for an already-
-        # downloaded file and skipped (which would silently drop it from the backup).
-        claimed = {}  # dest_base -> version_id that owns it
-
-        def _unique_base(base, vid):
-            cand, n = base, 2
-            while claimed.get(cand, vid) != vid:
-                cand = '{} ({})'.format(base, n)
-                n += 1
-            claimed[cand] = vid
-            return cand
-
-        for it in items:
+        for it in work:
             with LOCK:
                 if PROGRESS['cancel']:
                     break
                 PROGRESS['current'] = '{}/{}'.format(it['rel_path'], it['name'])
-            rel_dir = os.path.join(output_root, it['rel_path'])
-            stem = aps.safe_name(os.path.splitext(it['name'])[0])
-            dest_base = _unique_base(os.path.join(rel_dir, stem), it['version_id'])
+            dest_base = it['dest_base']
             entry = {'name': it['name'], 'rel_path': it['rel_path'],
                      'project_id': it['project_id'], 'version_id': it['version_id']}
             try:
-                already = any(os.path.exists(dest_base + '.' + f) for f in aps.PREFERRED_FORMATS)
-                dest, ft = aps.fetch_native(token, it['project_id'], it['version_id'], dest_base)
+                already = aps._existing_local(dest_base)[0] is not None
+                dest, ft = aps.fetch_native(token, it['project_id'], it['version_id'],
+                                            dest_base, overwrite=it['overwrite'])
                 if dest:
                     entry.update({'dest': dest, 'file_type': ft, 'size': os.path.getsize(dest)})
-                    bucket = 'skipped' if already else 'exported'
+                    downloaded = it['overwrite'] or not already
+                    bucket = 'exported' if downloaded else 'skipped'
+                    if downloaded:
+                        cloud_item = {'lineage_id': it.get('lineage_id'),
+                                      'project_id': it['project_id'],
+                                      'display_name': it.get('display_name') or it['name'],
+                                      'name': it['name'],
+                                      'last_modified': it.get('last_modified')}
+                        with LOCK:
+                            aps.manifest_put(man, aps._rel_key(output_root, dest),
+                                             aps.make_record(dest, output_root,
+                                                             it['version_id'], cloud_item, ft))
+                            aps.save_manifest(output_root, man)
                     with LOCK:
                         PROGRESS['results'][bucket].append(entry)
                 else:
@@ -208,6 +234,8 @@ def _download_worker(output_root, targets):
             with LOCK:
                 PROGRESS['done'] += 1
 
+        with LOCK:
+            aps.save_manifest(output_root, man)
         _write_log(output_root)
     except Exception as e:
         with LOCK:
@@ -408,9 +436,38 @@ def api_contents():
                     for f in folders],
         'items': [{'id': it['id'],
                    'name': it['attributes'].get('displayName', 'item'),
-                   'version_id': it.get('_tip_version_id')}
+                   'version_id': it.get('_tip_version_id'),
+                   'lineage_id': it.get('_lineage_id') or it['id'],
+                   'last_modified': it.get('_last_modified')}
                   for it in items],
     })
+
+
+# ============================ Routes: scan / compare ============================
+
+@app.route('/api/scan', methods=['POST'])
+def api_scan():
+    """FreeFileSync-style compare: diff the selected cloud targets against the local
+    folder + manifest and return a categorized plan. Read-only, synchronous."""
+    g = _auth_guard()
+    if g:
+        return g
+    body = request.get_json(force=True)
+    targets = body.get('targets', [])
+    if not targets:
+        return jsonify({'error': 'No items selected'}), 400
+    output_root = os.path.expanduser(body.get('output_root') or CONFIG['output_root'])
+    token = web_token()
+    collected = _expand_targets(token, targets)
+    man = aps.load_manifest(output_root)
+    plan = aps.build_plan(collected, man, output_root)
+    # Keep only the display-relevant fields (dest_base is an absolute local path).
+    keep = ('status', 'action_default', 'dest_key', 'dest_base_rel', 'version_id',
+            'version_number', 'recorded_version_number', 'lineage_id', 'project_id', 'name',
+            'rel_path', 'display_name', 'cloud_last_modified', 'local_mtime', 'local_size', 'file_type')
+    plans = [{k: p.get(k) for k in keep} for p in plan['plans']]
+    return jsonify({'plans': plans, 'orphans': plan['orphans'],
+                    'counts': plan['counts'], 'output_root': output_root})
 
 
 # ============================ Routes: download / progress ============================
@@ -425,11 +482,13 @@ def api_download():
             return jsonify({'error': 'A download is already in progress'}), 409
     body = request.get_json(force=True)
     targets = body.get('targets', [])
-    if not targets:
+    items = body.get('items')  # pre-planned rows from /api/scan (each may carry overwrite/dest_key)
+    if not targets and not items:
         return jsonify({'error': 'No items selected'}), 400
     output_root = os.path.expanduser(body.get('output_root') or CONFIG['output_root'])
     _reset_progress(output_root)
-    threading.Thread(target=_download_worker, args=(output_root, targets), daemon=True).start()
+    threading.Thread(target=_download_worker, args=(output_root, targets),
+                     kwargs={'items': items}, daemon=True).start()
     return jsonify({'ok': True})
 
 
